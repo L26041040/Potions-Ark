@@ -17,12 +17,19 @@ interface Backend {
 
 const BLOB_PATH = `${process.env.VERCEL_ENV === "production" ? "prod" : "dev"}/potions-ark-db.json`;
 
+// A compressed response can carry a weakened ETag (W/"...") that never matches
+// the stored version, so the document is read uncompressed and the ETag is
+// taken in its strong form.
+function strongEtag(etag: string): string {
+  return etag.replace(/^W\//, "");
+}
+
 const blobBackend: Backend = {
   async read() {
-    const res = await get(BLOB_PATH, { access: "private", useCache: false });
+    const res = await get(BLOB_PATH, { access: "private", useCache: false, headers: { "accept-encoding": "identity" } });
     if (!res || res.statusCode !== 200) return { doc: emptyDoc(), etag: null };
     const text = await new Response(res.stream).text();
-    return { doc: parse(text), etag: res.blob.etag };
+    return { doc: parse(text), etag: strongEtag(res.blob.etag) };
   },
   async write(doc, etag) {
     try {
@@ -34,7 +41,10 @@ const blobBackend: Backend = {
       });
       return true;
     } catch (error) {
-      if (error instanceof BlobPreconditionFailedError) return false;
+      if (error instanceof BlobPreconditionFailedError) {
+        console.warn("blob write conflict", { readEtag: etag });
+        return false;
+      }
       if (!etag && error instanceof BlobError && /exist/i.test(error.message)) return false;
       throw error;
     }

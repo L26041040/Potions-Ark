@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- the preinstalled Playwright can only be loaded with require */
 // Walks the main flows in a real browser.
 // Usage: node scripts/smoke.cjs <base-url> [591-listing-url]
+// For a protected Vercel preview, set SHARE_URL to its share link first.
 // Browser requests to other sites are answered with a stub page, so the test
 // never loads listing sites in the browser. The server still reads the 591 page
 // once, the same way it does for a real paste.
@@ -29,6 +30,11 @@ async function check(name, fn) {
 
 async function stubExternal(context) {
   const base = new URL(BASE);
+  if (process.env.SHARE_URL) {
+    const p = await context.newPage();
+    await p.goto(process.env.SHARE_URL);
+    await p.close();
+  }
   await context.route("**/*", (route) => {
     const url = new URL(route.request().url());
     if (url.host === base.host) return route.continue();
