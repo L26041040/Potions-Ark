@@ -88,15 +88,27 @@ async function cardCount(page) {
   await check("2 貼上 591 連結建立收藏（第一次會詢問暱稱）", async () => {
     const before = await cardCount(page);
     await paste(page, `看看這間 ${LISTING}?utm_source=line`);
-    await page.getByLabel("暱稱", { exact: true }).fill(`測試員${stamp}`);
-    await page.getByRole("dialog", { name: "你的暱稱" }).getByRole("button", { name: "確定", exact: true }).click();
+    const nickField = page.getByLabel("暱稱", { exact: true });
+    const asked = await nickField.waitFor({ timeout: 4000 }).then(() => true, () => false);
+    if (asked) {
+      await nickField.fill(`測試員${stamp}`);
+      await page.getByRole("dialog", { name: "你的暱稱" }).getByRole("button", { name: "確定", exact: true }).click();
+    }
     await page.getByRole("region", { name: "物件瀏覽" }).waitFor({ timeout: 20000 });
     listingId = new URL(page.url()).searchParams.get("item");
     assert.ok(listingId, "網址沒有帶 ?item=");
-    const manual = await dismissEdit(page);
-    assert.strictEqual(await cardCount(page), before + 1);
+    const existed = !asked;
+    if (existed) {
+      // The listing was saved by an earlier run, so no nickname was needed yet.
+      await page.getByRole("button", { name: "設定暱稱", exact: true }).click();
+      await nickField.fill(`測試員${stamp}`);
+      await page.getByRole("dialog", { name: "你的暱稱" }).getByRole("button", { name: "確定", exact: true }).click();
+    }
+    const manual = existed ? false : await dismissEdit(page);
+    assert.strictEqual(await cardCount(page), before + (existed ? 0 : 1));
     const title = await page.getByRole("region", { name: "物件瀏覽" }).locator("h2").innerText();
-    return `名稱：${title.slice(0, 30)}${manual ? "（伺服器讀不到網頁，已跳出補填視窗）" : "（已自動帶入）"}`;
+    const how = existed ? "（先前已收藏，直接開啟既有物件）" : manual ? "（伺服器讀不到網頁，已跳出補填視窗）" : "（已自動帶入）";
+    return `名稱：${title.slice(0, 30)}${how}`;
   });
 
   await check("3 右側顯示原始網頁（iframe）與開啟原始網頁按鈕", async () => {
@@ -121,10 +133,10 @@ async function cardCount(page) {
 
   await check("5 內部位址：照樣建立物件，但伺服器不去讀它", async () => {
     const before = await cardCount(page);
-    await paste(page, "http://127.0.0.1:4599/secret");
+    await paste(page, `http://127.0.0.1:4599/secret-${stamp}`);
     await page.getByRole("dialog", { name: "編輯物件" }).waitFor({ timeout: 15000 });
     await page.getByRole("button", { name: "取消", exact: true }).click();
-    await paste(page, "http://localhost:4599/secret");
+    await paste(page, `http://localhost:4599/secret-${stamp}`);
     await page.getByRole("dialog", { name: "編輯物件" }).waitFor({ timeout: 15000 });
     await page.getByRole("button", { name: "取消", exact: true }).click();
     assert.strictEqual(await cardCount(page), before + 2);
