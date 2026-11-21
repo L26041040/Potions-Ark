@@ -1,5 +1,7 @@
 # 資料放 Neon Postgres、照片放 Vercel Blob，不用 Supabase
 
+> 部分已不適用。規格 v2.0 起不再儲存照片，所以不使用 Vercel Blob。「資料庫用 Neon、不用 Supabase」的決定與理由仍然有效。
+
 最初的規格把 Supabase 列為首選，因為它一個服務就同時有資料庫與檔案儲存。我們改用 Neon Postgres（經 Vercel Marketplace 安裝）加 Vercel Blob：Supabase 免費專案閒置七天會暫停，必須有人登入後台手動喚醒，而選址倉庫正是「想到才開」的使用型態，又明確不做排程保活。Neon 閒置時也會休眠，但有連線就自動喚醒，不需要人介入。
 
 ## Considered Options
