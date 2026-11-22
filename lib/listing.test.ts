@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseListing } from "./listing";
+import { parseListing, resolve591Share } from "./listing";
 
 // Hand-written page shaped like a 591 shop rental page (values are made up).
 function page591(graph: unknown[]): string {
@@ -58,5 +58,22 @@ describe("parseListing", () => {
   it("only reads structured data on 591, other sites keep just their cover image", () => {
     const details = parseListing(page591([listing, place]), new URL("https://www.example-realty.com.tw/rent/123"), description);
     expect(details).toEqual({ photos: [], rent: null, area: null, address: "" });
+  });
+});
+
+describe("resolve591Share", () => {
+  it("takes the listing link out of 591's app share redirect page", () => {
+    const hop = new URL(
+      "https://line-liff.591.com.tw/redirect?url=https%3A%2F%2Fbusiness.591.com.tw%2Frent%2F22383299&sid=abc&utm_source=%E5%85%B6%E4%BB%96",
+    );
+    expect(resolve591Share(hop).toString()).toBe("https://business.591.com.tw/rent/22383299");
+  });
+
+  it("leaves other links alone and never follows the hop to another site", () => {
+    expect(resolve591Share(new URL("https://business.591.com.tw/rent/1")).toString()).toBe("https://business.591.com.tw/rent/1");
+    const outside = new URL("https://line-liff.591.com.tw/redirect?url=https%3A%2F%2Fevil.example%2Fphish");
+    expect(resolve591Share(outside).toString()).toBe(outside.toString());
+    const fake = new URL("https://line-liff.591.com.tw.evil.example/redirect?url=https%3A%2F%2Fbusiness.591.com.tw%2Frent%2F1");
+    expect(resolve591Share(fake).toString()).toBe(fake.toString());
   });
 });

@@ -132,13 +132,15 @@ export async function addUrls(input: unknown, nickname: unknown): Promise<Action
     const { doc } = await mutate((d) => {
       const decided: AddOutcome[] = [];
       for (const c of candidates) {
-        const existing = sameUrl(d, c.url);
         const preview = previews.get(c.url);
+        // A share link (591.to) is saved as the listing it points to, so it matches the web link too.
+        const listingUrl = (preview?.finalUrl && cleanUrl(preview.finalUrl)) || c.url;
+        const existing = sameUrl(d, c.url) ?? sameUrl(d, listingUrl);
         if (existing || !preview) {
           decided.push({ url: c.url, result: "duplicate", id: existing?.id });
           continue;
         }
-        const item = newItem(c.url, c.name, preview, who, now);
+        const item = newItem(listingUrl, c.name, preview, who, now);
         d.items.push(item);
         decided.push({ url: c.url, result: "added", id: item.id, needsFill: !preview.fetched });
       }
@@ -317,6 +319,9 @@ export async function refetchItem(id: unknown): Promise<ActionResult> {
     const { doc } = await mutate((d) => {
       const item = findItem(d, id);
       Object.assign(item, { health: preview.health, healthAt: checkedAt, healthReason: preview.healthReason });
+      // A saved share link (591.to) is replaced by the listing it points to, unless another item already has it.
+      const listingUrl = preview.finalUrl ? cleanUrl(preview.finalUrl) : null;
+      if (listingUrl && listingUrl !== item.sourceUrl && !sameUrl(d, listingUrl)) item.sourceUrl = listingUrl;
       const uploads = item.photos.filter((p) => p.source === "upload");
       item.photos = [...(preview.photos.length ? listingPhotos(preview.photos) : item.photos.filter((p) => p.source === "listing")), ...uploads];
       if (!item.coverUrl && preview.image) item.coverUrl = preview.image;

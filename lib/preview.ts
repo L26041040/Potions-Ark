@@ -4,7 +4,7 @@ import https from "node:https";
 import net from "node:net";
 import zlib from "node:zlib";
 import { classifyHealth, type Health, type PageResponse } from "./health";
-import { parseListing, type ListingDetails } from "./listing";
+import { parseListing, resolve591Share, type ListingDetails } from "./listing";
 import { parseMeta, type PageMeta } from "./meta";
 
 // Reads one listing page to get its title, cover and description, and to see
@@ -15,7 +15,15 @@ const TIMEOUT_MS = 6000;
 const MAX_BYTES = 1024 * 1024;
 const MAX_REDIRECTS = 3;
 
-export type Preview = PageMeta & ListingDetails & { fetched: boolean; embed: boolean; health: Health; healthReason: string };
+export type Preview = PageMeta &
+  ListingDetails & {
+    fetched: boolean;
+    embed: boolean;
+    health: Health;
+    healthReason: string;
+    /** The listing's own address after share links and redirects; empty when unknown. */
+    finalUrl: string;
+  };
 
 const blocked = new net.BlockList();
 for (const [addr, prefix] of [
@@ -137,7 +145,7 @@ export function allowsEmbedding(headers: IncomingMessage["headers"]): boolean {
 }
 
 export async function fetchPreview(rawUrl: string): Promise<Preview> {
-  let url = new URL(rawUrl);
+  let url = resolve591Share(new URL(rawUrl));
   const empty: Preview = {
     fetched: false,
     embed: url.protocol === "https:",
@@ -150,6 +158,7 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
     address: "",
     health: "unknown",
     healthReason: "",
+    finalUrl: "",
   };
   const failed = (error: PageResponse["error"], embed = empty.embed): Preview => {
     const verdict = classifyHealth({ status: null, headers: {}, body: null, error });
@@ -162,12 +171,12 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
       const res = await requestOnce(url, signal);
       const location = res.headers.location;
       if (res.status >= 300 && res.status < 400 && location) {
-        url = new URL(location, url);
+        url = resolve591Share(new URL(location, url));
         continue;
       }
       const embed = url.protocol === "https:" && allowsEmbedding(res.headers);
       const verdict = classifyHealth({ status: res.status, headers: res.headers, body: res.body });
-      const base = { ...empty, embed, health: verdict.health, healthReason: verdict.reason };
+      const base = { ...empty, embed, health: verdict.health, healthReason: verdict.reason, finalUrl: url.toString() };
       if (res.status !== 200 || !res.body || verdict.health === "gone") return base;
       const meta = parseMeta(res.body, url);
       const details = parseListing(res.body, url, meta.description);

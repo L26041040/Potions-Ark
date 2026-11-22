@@ -480,6 +480,29 @@ async function cardCount(page) {
     return results.join("；");
   });
 
+  if (REAL) {
+    await check("22 591 App 分享連結（591.to）存成物件本身的網址並帶入照片，與網頁版連結去重", async () => {
+      const share = "https://591.to/elOXb";
+      const listing = "https://business.591.com.tw/rent/22383299";
+      await page.getByRole("group", { name: "狀態篩選" }).getByRole("button", { name: /^全部/ }).click();
+      if ((await page.locator(`[data-source-url="${listing}"]`).count()) === 0) {
+        await paste(page, `【591】信義區店面 ${share}`);
+        await page.waitForFunction((u) => document.querySelector(`[data-source-url="${u}"]`), listing, { timeout: 30000 });
+      }
+      const card = page.locator(`[data-source-url="${listing}"]`).first();
+      await card.click();
+      const region = page.getByRole("region", { name: "物件瀏覽" });
+      const size = await loadedImage(region.locator('img[data-photo-source="listing"]').first());
+      const thumbs = await region.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").count();
+      await region.getByRole("button", { name: "關閉", exact: true }).click();
+      const before = await cardCount(page);
+      await paste(page, listing);
+      await page.getByText("這個物件已經在倉庫裡").waitFor();
+      assert.strictEqual(await cardCount(page), before);
+      return `591.to → ${listing}，照片 ${thumbs} 張（第一張 ${size.w}x${size.h}），再貼網頁版判定為重複`;
+    });
+  }
+
   if (process.env.LOCAL_DATA) {
     await check("21 到期重檢：只在開啟倉庫時、只檢查超過 24 小時且非不考慮／回收桶的物件", async () => {
       const fs = require("fs");

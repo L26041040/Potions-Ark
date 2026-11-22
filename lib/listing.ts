@@ -95,3 +95,20 @@ export function parseListing(html: string, pageUrl: URL, description: string): L
   }
   return details;
 }
+
+/**
+ * 591's app shares links as 591.to/…, which redirect to a LINE hand-off page
+ * whose `url` parameter holds the real listing. Take that listing directly;
+ * only 591's own hosts are accepted, so this can never lead elsewhere.
+ */
+export function resolve591Share(url: URL): URL {
+  if (url.hostname !== "line-liff.591.com.tw" || !url.pathname.startsWith("/redirect")) return url;
+  const inner = url.searchParams.get("url");
+  if (!inner) return url;
+  try {
+    const target = new URL(inner);
+    return (target.protocol === "https:" || target.protocol === "http:") && is591(target) ? target : url;
+  } catch {
+    return url;
+  }
+}
