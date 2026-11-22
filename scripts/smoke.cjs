@@ -48,15 +48,6 @@ async function paste(page, text) {
   await page.getByRole("button", { name: "收藏", exact: true }).click();
 }
 
-// When the server cannot read the page, the edit dialog opens for manual input.
-async function dismissEdit(page) {
-  await page.waitForTimeout(400);
-  const dialog = page.getByRole("dialog", { name: "編輯物件" });
-  if (!(await dialog.isVisible())) return false;
-  await dialog.getByRole("button", { name: "取消", exact: true }).click();
-  return true;
-}
-
 async function cardIds(page) {
   return page.locator("[data-item-id]").evaluateAll((els) => els.map((e) => e.getAttribute("data-item-id")));
 }
@@ -293,6 +284,46 @@ async function cardCount(page) {
     await m.getByRole("button", { name: "關閉", exact: true }).click();
     await m.getByRole("heading", { name: "Potions 二店選址倉庫" }).waitFor();
     await mobile.close();
+  });
+
+  await check("18 批量收藏：無上限、統計正確、處理中可操作、重貼不重複", async () => {
+    const lines = Array.from({ length: 35 }, (_, i) => `http://127.0.0.1:4599/batch-${stamp}-${i}`);
+    const text = [
+      ...lines,
+      `大哥看這間 http://localhost:4599/line-${stamp}，不錯`,
+      `${lines[0]}?utm_source=line`, // repeated inside the batch
+      LISTING, // already in the warehouse
+      "http://%zz/broken", // cannot be parsed
+    ].join("\n");
+    const before = await cardCount(page);
+    await page.getByRole("button", { name: "批量收藏", exact: true }).click();
+    const box = page.getByRole("region", { name: "批量收藏" });
+    await box.getByLabel("批量網址", { exact: true }).fill(text);
+    await box.getByText("找到 39 個網址").waitFor();
+    await box.getByRole("button", { name: "開始收藏", exact: true }).click();
+    // The warehouse stays usable while the batch runs.
+    assert.strictEqual(await page.getByRole("dialog").count(), 0, "批量收藏擋住了畫面");
+    await page.locator(`[data-item-id="${listingId}"]`).first().click();
+    await page.getByRole("region", { name: "物件瀏覽" }).waitFor();
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "關閉", exact: true }).click();
+    await box.getByText("完成", { exact: true }).waitFor({ timeout: 120000 });
+    const count = async (k) => Number(await box.locator(`[data-count="${k}"]`).innerText());
+    const first = { added: await count("added"), needsFill: await count("needs-fill"), duplicates: await count("duplicates"), failed: await count("failed") };
+    assert.deepStrictEqual(first, { added: 36, needsFill: 36, duplicates: 2, failed: 1 });
+    assert.strictEqual((await box.getByLabel("進度").innerText()).replace(/\s/g, ""), "39/39");
+    assert.strictEqual(await cardCount(page), before + 36);
+    assert.strictEqual(await page.getByRole("region", { name: "物件瀏覽" }).count(), 0, "批量收藏後自動開了面板");
+    // Pasting the same batch again must not create anything.
+    await box.getByRole("button", { name: "再貼一批", exact: true }).click();
+    await box.getByLabel("批量網址", { exact: true }).fill(text);
+    await box.getByRole("button", { name: "開始收藏", exact: true }).click();
+    await box.getByText("完成", { exact: true }).waitFor({ timeout: 120000 });
+    const again = { added: await count("added"), duplicates: await count("duplicates"), failed: await count("failed") };
+    assert.deepStrictEqual(again, { added: 0, duplicates: 38, failed: 1 });
+    assert.strictEqual(await cardCount(page), before + 36);
+    assert.strictEqual(internalHits, 0, `內部伺服器被讀了 ${internalHits} 次`);
+    await box.getByRole("button", { name: "關閉", exact: true }).click();
+    return `第一次 ${JSON.stringify(first)}；重貼 ${JSON.stringify(again)}`;
   });
 
   await browser.close();

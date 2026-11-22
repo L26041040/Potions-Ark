@@ -1,10 +1,10 @@
 "use server";
 
 import { randomBytes } from "node:crypto";
-import { fetchPreview } from "@/lib/preview";
+import { fetchPreview, type Preview } from "@/lib/preview";
 import { mutate, NO_WRITE, readDoc } from "@/lib/store";
-import { isStatus, type ActionResult, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
-import { cleanUrl, extractUrl, hostOf, nameFromText } from "@/lib/url";
+import { isStatus, type ActionResult, type AddOutcome, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
+import { cleanUrl, hostOf, nameFromText } from "@/lib/url";
 
 // No login: every visitor may read and write. Inputs are still validated and
 // trimmed so a bad request cannot corrupt the shared document.
@@ -51,45 +51,89 @@ export async function loadDoc(): Promise<ActionResult> {
   return run(async () => ({ ok: true, doc: await readDoc() }));
 }
 
-export async function addFromPaste(pasted: unknown, nickname: unknown): Promise<ActionResult> {
+/** Links sent per call. The browser splits any number of links into calls of this size. */
+const URLS_PER_CALL = 8;
+const FETCH_CONCURRENCY = 4;
+
+async function mapLimit<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function newItem(url: string, name: string, preview: Preview, who: string, now: string): Item {
+  return {
+    id: newId(),
+    name: preview.title || name || `來自 ${hostOf(url)} 的物件`,
+    sourceUrl: url,
+    coverUrl: preview.image,
+    info: preview.description,
+    address: "",
+    embed: preview.embed,
+    status: "new",
+    note: "",
+    noteBy: "",
+    noteAt: null,
+    createdBy: who,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+    deletedBy: "",
+  };
+}
+
+/**
+ * Adds a small batch of links: pages are read a few at a time, then the whole
+ * batch is written once. Duplicates are decided at write time, so sending the
+ * same links again after an interruption never creates a second item.
+ */
+export async function addUrls(input: unknown, nickname: unknown): Promise<ActionResult> {
   return run(async () => {
-    const found = extractUrl(text(pasted, 4000));
-    const url = found ? cleanUrl(found.url) : null;
-    if (!found || !url) return { ok: false, error: "沒有找到網址，請改用「手動新增」" };
+    if (!Array.isArray(input) || input.length === 0 || input.length > URLS_PER_CALL) {
+      return { ok: false, error: "一次最多送出 " + URLS_PER_CALL + " 個網址，請重新整理後再試" };
+    }
     const who = nick(nickname);
+    const outcomes: AddOutcome[] = [];
+    const candidates: { url: string; name: string }[] = [];
+    for (const entry of input) {
+      const raw = text((entry as { url?: unknown })?.url, 2000);
+      const url = raw ? cleanUrl(raw) : null;
+      if (!url) outcomes.push({ url: raw, result: "failed", error: "網址無效" });
+      else candidates.push({ url, name: nameFromText(text((entry as { name?: unknown })?.name, 400)) });
+    }
 
     const before = await readDoc();
-    const dup = sameUrl(before, url);
-    if (dup) return { ok: true, doc: before, id: dup.id, existing: true };
-
-    const preview = await fetchPreview(url);
-    const now = new Date().toISOString();
-    const item: Item = {
-      id: newId(),
-      name: preview.title || nameFromText(found.rest) || `來自 ${hostOf(url)} 的物件`,
-      sourceUrl: url,
-      coverUrl: preview.image,
-      info: preview.description,
-      address: "",
-      embed: preview.embed,
-      status: "new",
-      note: "",
-      noteBy: "",
-      noteAt: null,
-      createdBy: who,
-      createdAt: now,
-      updatedAt: now,
-      deletedAt: null,
-      deletedBy: "",
-    };
-    const { doc, result } = await mutate((d) => {
-      const existing = sameUrl(d, url);
-      if (existing) return NO_WRITE;
-      d.items.push(item);
-      return item.id;
+    const toFetch = candidates.filter((c) => !sameUrl(before, c.url));
+    const previews = new Map<string, Preview>();
+    await mapLimit(toFetch, FETCH_CONCURRENCY, async (c) => {
+      previews.set(c.url, await fetchPreview(c.url));
     });
-    if (result === NO_WRITE) return { ok: true, doc, id: sameUrl(doc, url)?.id, existing: true };
-    return { ok: true, doc, id: result, fetched: preview.fetched };
+
+    const now = new Date().toISOString();
+    const { doc } = await mutate((d) => {
+      const decided: AddOutcome[] = [];
+      for (const c of candidates) {
+        const existing = sameUrl(d, c.url);
+        const preview = previews.get(c.url);
+        if (existing || !preview) {
+          decided.push({ url: c.url, result: "duplicate", id: existing?.id });
+          continue;
+        }
+        const item = newItem(c.url, c.name, preview, who, now);
+        d.items.push(item);
+        decided.push({ url: c.url, result: "added", id: item.id, needsFill: !preview.fetched });
+      }
+      outcomes.push(...decided);
+      return decided.some((o) => o.result === "added") ? true : NO_WRITE;
+    });
+    return { ok: true, doc, outcomes };
   });
 }
 

@@ -15,12 +15,57 @@ export function extractUrl(text: string): { url: string; rest: string } | null {
     url = "https://" + bare[0];
     match = bare;
   }
-  url = url.replace(/[.,;:!?'"*~]+$/, "");
-  while (/[)\]}]$/.test(url) && count(url, url.at(-1)!) > count(url, opener(url.at(-1)!))) {
-    url = url.slice(0, -1);
-  }
+  url = trimUrl(url);
   const rest = (match ? trimmed.replace(match[0], " ") : trimmed).replace(/\s+/g, " ").trim();
   return { url, rest };
+}
+
+function trimUrl(url: string): string {
+  let out = url.replace(/[.,;:!?'"*~]+$/, "");
+  while (/[)\]}]$/.test(out) && count(out, out.at(-1)!) > count(out, opener(out.at(-1)!))) {
+    out = out.slice(0, -1);
+  }
+  return out;
+}
+
+export type ExtractedUrls = {
+  /** Cleaned, de-duplicated links with the words found on the same line. */
+  entries: { url: string; name: string }[];
+  /** Links that repeat an earlier one in the same text. */
+  duplicates: string[];
+  /** Strings that look like links but cannot be parsed. */
+  invalid: string[];
+};
+
+/** Finds every http(s) link in pasted text (one per line or a whole chat message). No limit on count. */
+export function extractAllUrls(text: string): ExtractedUrls {
+  const result: ExtractedUrls = { entries: [], duplicates: [], invalid: [] };
+  const seen = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const matches = [...line.matchAll(new RegExp(URL_IN_TEXT.source, "gi"))];
+    for (const match of matches) {
+      const raw = trimUrl(match[0]);
+      const url = cleanUrl(raw);
+      if (!url) {
+        result.invalid.push(raw);
+        continue;
+      }
+      if (seen.has(url)) {
+        result.duplicates.push(raw);
+        continue;
+      }
+      seen.add(url);
+      let name = "";
+      if (matches.length === 1) {
+        const start = match.index ?? 0;
+        const before = line.slice(0, start).replace(/[\s:：,，、]+$/, "");
+        const after = line.slice(start + raw.length).replace(/^[\s:：,，、。.]+/, "");
+        name = nameFromText([before, after].filter(Boolean).join(" "));
+      }
+      result.entries.push({ url, name });
+    }
+  }
+  return result;
 }
 
 function opener(closer: string): string {

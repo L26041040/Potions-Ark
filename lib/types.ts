@@ -54,8 +54,18 @@ export type ItemFields = {
   embed: boolean;
 };
 
+/** What happened to one link in a batch add. */
+export type AddOutcome = {
+  url: string;
+  result: "added" | "duplicate" | "failed";
+  id?: string;
+  /** Added, but nothing could be read from the page, so it needs filling in by hand. */
+  needsFill?: boolean;
+  error?: string;
+};
+
 export type ActionResult =
-  | { ok: true; doc: Doc; id?: string; existing?: boolean; fetched?: boolean }
+  | { ok: true; doc: Doc; id?: string; outcomes?: AddOutcome[] }
   | { ok: false; error: string; doc?: Doc };
 
 export function emptyDoc(): Doc {

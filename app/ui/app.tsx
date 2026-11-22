@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { addComment, addFromPaste, addManual, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
+import { addComment, addManual, addUrls, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
 import { STATUS_LABEL, STATUSES, type ActionResult, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
-import { cleanUrl, extractUrl } from "@/lib/url";
+import { cleanUrl, extractAllUrls, extractUrl, nameFromText } from "@/lib/url";
 import { Cover, readNick, StatusBadge, storeNickname, useIsDesktop, useNickname } from "./bits";
+import { BatchPanel, useBatchImport, type BatchState } from "./batch";
 import { DesktopDetail, MobileDetail, type DetailProps } from "./detail";
 import { ItemDialog, NicknameDialog } from "./dialogs";
 
@@ -52,6 +53,8 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   const [lastOpened, setLastOpened] = useState<string | null>(initialItemId);
   const [scrollTo, setScrollTo] = useState<{ id: string } | null>(null);
   const pasteRef = useRef<HTMLInputElement>(null);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const batch = useBatchImport({ doc, setDoc, requireNick, onFinished: onBatchFinished });
 
   const q = query.trim().toLowerCase();
   const visible = doc.items
@@ -168,14 +171,30 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
     pasteRef.current?.focus();
   }
 
+  function onBatchFinished(result: BatchState) {
+    setQuery("");
+    if (filter !== "active" && filter !== "new") setFilter("active");
+    setToast({
+      text: `批量收藏完成：成功 ${result.added}（需補填 ${result.needsFill}）、重複 ${result.duplicates}、失敗 ${result.failed.length}`,
+      error: result.failed.length > 0,
+    });
+  }
+
   // ---- Actions ----
   async function onPaste(e: FormEvent) {
     e.preventDefault();
     const raw = paste.trim();
     if (!raw || pasting) return;
+    const parsed = extractAllUrls(raw);
+    if (parsed.entries.length + parsed.duplicates.length + parsed.invalid.length > 1) {
+      // Several links pasted into the box are handled exactly like a batch.
+      setBatchOpen(true);
+      if (await batch.start(raw)) resetPasteBox();
+      return;
+    }
     const found = extractUrl(raw);
     const url = found ? cleanUrl(found.url) : null;
-    if (!url) {
+    if (!found || !url) {
       setToast({ text: "沒有找到網址，請改用「手動新增」", error: true });
       return;
     }
@@ -188,16 +207,21 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
     const nick = await requireNick();
     if (!nick) return;
     setPasting(true);
-    const res = await run(() => addFromPaste(raw, nick));
+    const res = await run(() => addUrls([{ url, name: nameFromText(found.rest) }], nick));
     setPasting(false);
-    if (!res?.ok || !res.id) return;
+    const outcome = res?.ok ? res.outcomes?.[0] : undefined;
+    if (!outcome) return;
+    if (outcome.result === "failed") {
+      setToast({ text: outcome.error || "無法收藏這個網址", error: true });
+      return;
+    }
     resetPasteBox();
-    if (res.existing) {
+    if (outcome.result === "duplicate" || !outcome.id) {
       setToast({ text: "這個物件已經在倉庫裡" });
       return;
     }
-    showAdded(res.id);
-    setToast({ text: res.fetched ? "已收藏" : "已收藏，但讀不到網站資料，可稍後在物件中補填" });
+    showAdded(outcome.id);
+    setToast({ text: outcome.needsFill ? "已收藏，但讀不到網站資料，可稍後在物件中補填" : "已收藏" });
   }
 
   async function onSubmitItem(fields: ItemFields) {
@@ -260,6 +284,14 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
             </button>
           </form>
           <div className="ml-auto flex items-center gap-2 md:ml-0">
+            <button
+              type="button"
+              onClick={() => setBatchOpen((v) => !v)}
+              aria-expanded={batchOpen}
+              className="whitespace-nowrap rounded-lg px-3 py-2 text-sm ring-1 ring-stone-300 hover:bg-stone-50"
+            >
+              {batch.state.running ? `批量收藏 ${batch.state.processed}/${batch.state.total}` : "批量收藏"}
+            </button>
             <button type="button" onClick={() => setDialog({ kind: "add" })} className="whitespace-nowrap rounded-lg px-3 py-2 text-sm ring-1 ring-stone-300 hover:bg-stone-50">
               手動新增
             </button>
@@ -274,6 +306,8 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
           </div>
         </div>
       </header>
+
+      {batchOpen && <BatchPanel state={batch.state} onStart={batch.start} onReset={batch.reset} onClose={() => setBatchOpen(false)} />}
 
       <div className="flex min-h-0 flex-1">
         <section className={`min-h-0 overflow-y-auto ${split ? "w-1/3 border-r" : "w-full"}`} aria-label="物件倉庫">
