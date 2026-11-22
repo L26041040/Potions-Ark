@@ -430,6 +430,8 @@ async function showFilter(page, label) {
     await showFilter(page, "全部");
     const reloaded = page.getByRole("region", { name: "物件瀏覽" });
     const reThumbs = reloaded.getByRole("list", { name: "照片縮圖" }).getByRole("listitem");
+    // Wait for the panel to render before counting thumbnails.
+    await reloaded.getByLabel("照片位置").waitFor();
     if (await reThumbs.count()) await reThumbs.last().click();
     await loadedImage(reloaded.locator('img[data-photo-source="upload"]'));
     const other = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -437,6 +439,7 @@ async function showFilter(page, label) {
     const p2 = await other.newPage();
     await p2.goto(`${BASE}/?item=${listingId}`);
     const r2 = p2.getByRole("region", { name: "物件瀏覽" });
+    await r2.getByLabel("照片位置").waitFor();
     const count2 = await r2.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").count().catch(() => 0);
     if (count2 > 0) await r2.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").last().click();
     await loadedImage(r2.locator('img[data-photo-source="upload"]'));
