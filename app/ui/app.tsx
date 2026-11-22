@@ -6,7 +6,7 @@ import { isDueForCheck } from "@/lib/health";
 import { findSameListing } from "@/lib/merge";
 import { matchesQuery } from "@/lib/search";
 import { matchesQuick, SORT_LABEL, sortItems, type QuickFilter, type SortKey } from "@/lib/compare";
-import { parseWan } from "@/lib/units";
+import { fromWanInput, parseAmount } from "@/lib/units";
 import { STATUS_LABEL, STATUSES, type ActionResult, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
 import { cleanUrl, extractAllUrls, extractUrl, nameFromText } from "@/lib/url";
 import { Cover, HealthBadge, readNick, StatusBadge, storeNickname, useIsDesktop, useNickname } from "./bits";
@@ -92,13 +92,9 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   }, [initialDoc]);
 
   const q = query.trim().toLowerCase();
-  const maxRent = parseWan(maxRentText);
-  const minArea = Number(minAreaText.replace(/[,\s坪]/g, ""));
-  const quick: QuickFilter = {
-    maxRent: maxRent !== null && !Number.isNaN(maxRent) ? maxRent : null,
-    minArea: minAreaText.trim() && Number.isFinite(minArea) && minArea > 0 ? minArea : null,
-    groundFloor,
-  };
+  // Unreadable entries are ignored rather than hiding everything.
+  const usable = (n: number | null) => (n === null || Number.isNaN(n) ? null : n);
+  const quick: QuickFilter = { maxRent: usable(fromWanInput(maxRentText)), minArea: usable(parseAmount(minAreaText, "坪")), groundFloor };
   const quickCount = (quick.maxRent !== null ? 1 : 0) + (quick.minArea !== null ? 1 : 0) + (quick.groundFloor ? 1 : 0);
   const visible = sortItems(
     doc.items.filter((i) => i.id === openId || (matchesFilter(i, filter) && matchesQuery(i, q) && matchesQuick(i, quick))),
@@ -112,8 +108,8 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   const openItem = openId ? doc.items.find((i) => i.id === openId) ?? null : null;
   const index = openItem ? visible.findIndex((i) => i.id === openItem.id) : -1;
   const counts = Object.fromEntries(FILTERS.map((f) => [f.key, doc.items.filter((i) => matchesFilter(i, f.key)).length]));
-  // A search also tells which other filters hold matches, so nothing seems missing.
-  const elsewhere = q
+  // A search or quick filter also tells which other filters hold matches, so nothing seems missing.
+  const elsewhere = q || quickCount
     ? FILTERS.filter((f) => f.key !== filter && f.key !== "active" && f.key !== "gone")
         .map((f) => ({
           ...f,
@@ -440,7 +436,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                 onClick={() => setQuickOpen((v) => !v)}
                 className={`rounded-lg px-2.5 py-1 ring-1 ${quickCount ? "bg-amber-50 text-amber-900 ring-amber-300" : "bg-white text-stone-700 ring-stone-300"}`}
               >
-                條件篩選{quickCount ? `（${quickCount}）` : ""} {quickOpen ? "▴" : "▾"}
+                快速篩選{quickCount ? `（${quickCount}）` : ""} {quickOpen ? "▴" : "▾"}
               </button>
               {quickCount > 0 && (
                 <button type="button" onClick={clearQuick} className="rounded-lg px-2 py-1 text-stone-600 underline underline-offset-2">
@@ -452,7 +448,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
               </span>
             </div>
             {quickOpen && (
-              <div role="group" aria-label="條件篩選" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-white p-2 text-sm ring-1 ring-stone-200">
+              <div role="group" aria-label="快速篩選" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-white p-2 text-sm ring-1 ring-stone-200">
                 <label className="flex items-center gap-1">
                   <span className="text-stone-600">租金上限</span>
                   <input

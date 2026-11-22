@@ -23,8 +23,8 @@ export const TAG_KEYS: TagKey[] = ["food", "alcohol", "transfer"];
 /** A shareholder's yes/no for one tag; always wins over what was read automatically. */
 export type TagOverride = { value: boolean; by: string; at: string };
 
-/** What a page read found for one tag, with the words that decided it. */
-export type AutoTag = { value: boolean; evidence: string };
+/** What a page read found for one tag, with the words that decided it; null when the text says both yes and no. */
+export type AutoTag = { value: boolean | null; evidence: string };
 
 export type Photo = {
   id: string;

@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { Item, ItemFields } from "@/lib/types";
-import { zoneOf } from "@/lib/compare";
-import { parseWan, rentInput } from "@/lib/units";
+import { autoZoneOf } from "@/lib/compare";
+import { fromWanInput, parseAmount, toWanInput } from "@/lib/units";
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   useEffect(() => {
@@ -94,17 +94,18 @@ export function ItemDialog({
   });
   // Rent is typed in 萬元 and stored in 元. The form starts from the exact stored value,
   // and an untouched field sends the stored value back unchanged.
-  const initialRent = rentInput(item?.rent ?? null);
+  const initialRent = toWanInput(item?.rent ?? null);
   const [rentText, setRentText] = useState(initialRent);
   const [areaText, setAreaText] = useState(item?.area != null ? String(item.area) : "");
-  const rent = rentText === initialRent ? (item?.rent ?? null) : parseWan(rentText);
+  const rent = rentText === initialRent ? (item?.rent ?? null) : fromWanInput(rentText);
   const rentError = Number.isNaN(rent) ? "請輸入數字（萬元），例如 15.6" : rent !== null && rent > 100_000_000 ? "單位是萬元，例如 15.6 代表 156,000 元" : "";
-  const autoZone = item ? zoneOf({ ...item, zone: "" }).value : "";
+  const area = parseAmount(areaText, "坪");
+  const areaError = Number.isNaN(area) ? "請輸入數字，例如 24.5" : "";
+  const autoZone = item ? autoZoneOf(item).value : "";
   const set = <K extends keyof ItemFields>(key: K, value: ItemFields[K]) => setFields((f) => ({ ...f, [key]: value }));
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const toNumber = (t: string) => (t.trim() ? Number(t.replace(/,/g, "")) : null);
-    if (fields.name.trim() && !rentError) onSubmit({ ...fields, rent, area: toNumber(areaText) });
+    if (fields.name.trim() && !rentError && !areaError) onSubmit({ ...fields, rent, area });
   };
   return (
     <Modal title={mode === "add" ? "手動新增物件" : "編輯物件"} onClose={onCancel}>
@@ -125,7 +126,8 @@ export function ItemDialog({
             )}
           </Field>
           <Field label="坪數">
-            <input value={areaText} onChange={(e) => setAreaText(e.target.value)} inputMode="decimal" placeholder="例如 24.5" className={input} />
+            <input value={areaText} onChange={(e) => setAreaText(e.target.value)} inputMode="decimal" placeholder="例如 24.5" className={input} aria-label="坪數" aria-invalid={Boolean(areaError)} />
+            {areaError && <span className="mt-1 block text-xs text-rose-700">{areaError}</span>}
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -171,7 +173,7 @@ export function ItemDialog({
         )}
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onCancel} className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100">取消</button>
-          <button type="submit" disabled={busy || !fields.name.trim() || Boolean(rentError)} className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
+          <button type="submit" disabled={busy || !fields.name.trim() || Boolean(rentError) || Boolean(areaError)} className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
             {busy ? "儲存中…" : mode === "add" ? "新增" : "儲存"}
           </button>
         </div>

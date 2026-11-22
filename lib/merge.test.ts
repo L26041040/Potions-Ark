@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyRecord, findSameListing, NO_PAGE as NO_PAGE_FOR_TEST, type MergeContext, type PageFacts } from "./merge";
+import { applyRecord, findSameListing, NO_PAGE, type MergeContext, type PageFacts } from "./merge";
 import { recordFromRow, type ImportRecord } from "./sheet";
 import { normalizeItem, type Doc, type Item } from "./types";
 
@@ -131,7 +131,7 @@ describe("applyRecord", () => {
   it("refreshes tags read from the listing but never a shareholder's tag setting", () => {
     const override = { food: { value: false, by: "炒飯", at: "2026-11-22T00:00:00Z" } };
     const doc = docWith(existing({ health: "unchecked", tagOverrides: override }));
-    const page: PageFacts = { ...NO_PAGE_FOR_TEST, fetched: true, tags: { food: { value: true, evidence: "可餐飲" } }, health: "ok", healthReason: "正常" };
+    const page: PageFacts = { ...NO_PAGE, fetched: true, tags: { food: { value: true, evidence: "可餐飲" } }, health: "ok", healthReason: "正常" };
     applyRecord(doc, row11, ctx({ page }));
     expect(doc.items[0].tagOverrides).toEqual(override);
     expect(doc.items[0].autoTags).toEqual({ food: { value: true, evidence: "可餐飲" } });

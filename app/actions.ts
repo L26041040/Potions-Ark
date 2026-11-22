@@ -355,11 +355,12 @@ export async function setTag(id: unknown, key: unknown, value: unknown, nickname
       const tag = key as TagKey;
       const current = item.tagOverrides[tag];
       if (value === null ? !current : current?.value === value) return NO_WRITE;
+      const now = new Date().toISOString();
       const next = { ...item.tagOverrides };
       if (value === null) delete next[tag];
-      else next[tag] = { value, by: who, at: new Date().toISOString() };
+      else next[tag] = { value, by: who, at: now };
       item.tagOverrides = next;
-      item.updatedAt = new Date().toISOString();
+      item.updatedAt = now;
       return true;
     });
     return { ok: true, doc };

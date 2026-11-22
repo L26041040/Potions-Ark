@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { zoneOf } from "@/lib/compare";
+import { zoneOf, type Zone } from "@/lib/compare";
 import { contactParts } from "@/lib/contact";
-import { tagsOf } from "@/lib/tags";
+import { tagsOf, type TagView } from "@/lib/tags";
 import { STATUS_LABEL, TAG_KEYS, type Doc, type Entry, type Item, type Status, type TagKey } from "@/lib/types";
-import { formatArea, formatRent, NOT_GIVEN } from "@/lib/units";
+import { NOT_GIVEN } from "@/lib/units";
+import { factTexts } from "./facts";
 import { hostOf, mapsUrl } from "@/lib/url";
 import { formatTime, openSource, StatusButtons } from "./bits";
 import { PhotoViewer } from "./photos";
@@ -151,16 +152,16 @@ function Contact({ text }: { text: string }) {
   );
 }
 
-const ZONE_SOURCE: Record<string, string> = { 試算表商圈: "試算表", 地址: "依地址" };
+const ZONE_SOURCE: Record<Zone["source"], string> = { "": "", 股東填寫: "", 試算表商圈: "試算表", 地址: "依地址" };
 
 /** Rent, area, floor and 商圈／區域 always show, with 「未提供」 when missing. */
 function Facts({ item }: { item: Item }) {
-  const zone = zoneOf(item);
+  const f = factTexts(item);
   const rows: { key: string; label: string; value: string; note?: string }[] = [
-    { key: "rent", label: "月租金", value: formatRent(item.rent) },
-    { key: "area", label: "坪數", value: formatArea(item.area) },
-    { key: "floor", label: "樓層", value: item.floor || NOT_GIVEN },
-    { key: "zone", label: "商圈／區域", value: zone.value || NOT_GIVEN, note: ZONE_SOURCE[zone.source] },
+    { key: "rent", label: "月租金", value: f.rent },
+    { key: "area", label: "坪數", value: f.area },
+    { key: "floor", label: "樓層", value: f.floor },
+    { key: "zone", label: "商圈／區域", value: f.zone, note: ZONE_SOURCE[zoneOf(item).source] },
   ];
   if (item.address) rows.push({ key: "address", label: "地址", value: item.address });
   return (
@@ -182,7 +183,7 @@ function Facts({ item }: { item: Item }) {
   );
 }
 
-const TAG_STATE: Record<string, { text: string; style: string }> = {
+const TAG_STATE: Record<TagView["state"], { text: string; style: string }> = {
   yes: { text: "是", style: "bg-emerald-50 text-emerald-800 ring-emerald-200" },
   no: { text: "否", style: "bg-rose-50 text-rose-800 ring-rose-200" },
   unknown: { text: "未確認", style: "bg-stone-100 text-stone-600 ring-stone-200" },
@@ -196,9 +197,9 @@ function StoreTags({ item, onTag }: { item: Item; onTag: DetailProps["onTag"] })
       <h3 className="text-xs font-medium text-stone-500">店面條件（只認明確寫出的條件，可自行修正）</h3>
       {TAG_KEYS.map((key) => {
         const t = tags[key];
-        const set = item.tagOverrides[key];
+        const override = item.tagOverrides[key];
         const why =
-          t.source === "股東填寫" ? `股東填寫（${t.by || "匿名"}）`
+          t.manual ? `股東填寫（${t.by || "匿名"}）`
           : t.conflict ? `來源不一致，請確認：${t.evidence}`
           : t.source ? `${t.source}：「${t.evidence}」`
           : "沒有明確資料";
@@ -220,9 +221,9 @@ function StoreTags({ item, onTag }: { item: Item; onTag: DetailProps["onTag"] })
               {why}
             </span>
             <span className="flex shrink-0 overflow-hidden rounded-md ring-1 ring-stone-300">
-              {choice("是", true, set?.value === true)}
-              {choice("否", false, set?.value === false)}
-              {choice("自動", null, !set)}
+              {choice("是", true, override?.value === true)}
+              {choice("否", false, override?.value === false)}
+              {choice("自動", null, !override)}
             </span>
           </div>
         );

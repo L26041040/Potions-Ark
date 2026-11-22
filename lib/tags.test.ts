@@ -30,6 +30,19 @@ describe("detectTags", () => {
     expect(value("可能可餐飲，要再問")).toEqual({});
     expect(value("可餐飲？")).toEqual({});
     expect(value("適合高級西餐廳\n可能可以往米其林拚的那種")).toEqual({});
+    // A hedge covers the whole sentence, not just up to the next comma.
+    expect(value("好像是餐廳，要頂讓")).toEqual({});
+    expect(value("看起來是之前店家，頂讓中")).toEqual({});
+    // Past use and questions settle nothing.
+    expect(value("之前是可餐飲的店")).toEqual({});
+    expect(value("餐飲可否再問")).toEqual({});
+    expect(value("可餐飲嗎")).toEqual({});
+    // A plain statement on its own line still counts.
+    expect(value("店面漂亮\n是頂讓，80萬")).toEqual({ transfer: true });
+  });
+
+  it("records a listing text that says both yes and no as undecided", () => {
+    expect(detectTags("可餐飲\n不可餐飲").food).toEqual({ value: null, evidence: "可餐飲 ／ 不可餐飲" });
   });
 
   it("keeps the words that decided it", () => {
@@ -52,6 +65,11 @@ describe("tagsOf", () => {
   it("uses what the 591 listing text said when it was read", () => {
     const tags = tagsOf(item({ name: "金店面", autoTags: { food: { value: true, evidence: "可餐飲、可營登" } } }));
     expect(tags.food).toMatchObject({ state: "yes", source: "591 刊登內容", evidence: "可餐飲、可營登" });
+  });
+
+  it("stays 未確認 when the 591 text disagrees with itself, even if the title says yes", () => {
+    const tags = tagsOf(item({ name: "#可餐飲", autoTags: { food: { value: null, evidence: "可餐飲 ／ 不可餐飲" } } }));
+    expect(tags.food).toMatchObject({ state: "unknown", conflict: true });
   });
 
   it("is 未確認 when nothing is said or sources disagree", () => {

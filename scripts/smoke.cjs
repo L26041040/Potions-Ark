@@ -668,8 +668,8 @@ async function showFilter(page, label) {
     }
     await page.getByLabel("排序", { exact: true }).selectOption({ label: "最新新增" });
     // Quick filters, alone and together; items without the data never match.
-    await page.getByRole("button", { name: /^條件篩選/ }).click();
-    const quick = page.getByRole("group", { name: "條件篩選" });
+    await page.getByRole("button", { name: /^快速篩選/ }).click();
+    const quick = page.getByRole("group", { name: "快速篩選" });
     const expectShown = async (want, why) => {
       await page.waitForFunction((n) => document.querySelectorAll("[data-item-id]").length === n, want.length);
       assert.strictEqual(await order(), want, why);
@@ -686,12 +686,12 @@ async function showFilter(page, label) {
     await expectShown("A", "租金上限 25 萬＋一樓");
     await page.getByRole("button", { name: "清除條件", exact: true }).click();
     await expectShown("CBA", "清除條件");
-    await page.getByRole("button", { name: /^條件篩選/ }).click();
+    await page.getByRole("button", { name: /^快速篩選/ }).click();
     await search.fill("");
     return "三視圖數值一致、萬元編輯 10.68→106,800 且原值保留、六種排序、三種篩選與清除、標籤自動／人工／還原自動皆正確";
   });
 
-  await check("25 手機：卡片與列表看得到租金坪數、排序與條件篩選可用、詳細面板有店面條件", async () => {
+  await check("25 手機：卡片與列表看得到租金坪數、排序與快速篩選可用、詳細面板有店面條件", async () => {
     const mobile = await browser.newContext({ ...devices["iPhone 13"] });
     await stubExternal(mobile);
     await mobile.addInitScript((n) => localStorage.setItem("potions-nickname", n), `手機${stamp}`);
@@ -706,8 +706,8 @@ async function showFilter(page, label) {
     const overflow = await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(overflow <= 1, `手機版橫向溢出 ${overflow}px`);
     await m.getByLabel("排序", { exact: true }).selectOption({ label: "租金高到低" });
-    await m.getByRole("button", { name: /^條件篩選/ }).click();
-    await m.getByRole("group", { name: "條件篩選" }).getByLabel("必須包含一樓").check();
+    await m.getByRole("button", { name: /^快速篩選/ }).click();
+    await m.getByRole("group", { name: "快速篩選" }).getByLabel("必須包含一樓").check();
     await m.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 1);
     await m.getByRole("button", { name: "清除條件", exact: true }).click();
     await m.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 3);
@@ -719,7 +719,7 @@ async function showFilter(page, label) {
     await m.getByRole("dialog", { name: "編輯物件" }).getByLabel("月租金（萬元）", { exact: true }).waitFor();
     await m.getByRole("dialog", { name: "編輯物件" }).getByRole("button", { name: "取消", exact: true }).click();
     await mobile.close();
-    return "iPhone 13：無橫向溢出、排序與條件篩選可用並可清除、列表與詳細面板正常";
+    return "iPhone 13：無橫向溢出、排序與快速篩選可用並可清除、列表與詳細面板正常";
   });
 
   if (REAL) {

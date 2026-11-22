@@ -14,6 +14,8 @@ describe("zoneOf", () => {
     expect(zoneOf(item({ address: "台北市大安區市民大道四段" }))).toEqual({ value: "大安區", source: "地址" });
     expect(zoneOf(item({ address: "大安區四維路76巷19號" }))).toEqual({ value: "大安區", source: "地址" });
     expect(zoneOf(item({ address: "台北市中山區新生北路二段68巷" }))).toEqual({ value: "中山區", source: "地址" });
+    expect(zoneOf(item({ address: "106台北市大安區市民大道四段" }))).toEqual({ value: "大安區", source: "地址" });
+    expect(zoneOf(item({ address: "台灣台北市中山區新生北路" }))).toEqual({ value: "中山區", source: "地址" });
   });
 
   it("is empty when nothing says it", () => {

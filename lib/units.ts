@@ -17,15 +17,21 @@ export function formatArea(area: number | null): string {
   return area ? `${trim2(area)}坪` : NOT_GIVEN;
 }
 
+/** A positive number typed in a form (「1,200」, or 「50坪」 when the unit is given). Blank is null; anything else is NaN. */
+export function parseAmount(text: string, unit = ""): number | null {
+  let t = text.replace(/[,\s]/g, "");
+  if (unit && t.endsWith(unit)) t = t.slice(0, -unit.length);
+  if (!t) return null;
+  return /^\d+(?:\.\d+)?$/.test(t) && Number(t) > 0 ? Number(t) : NaN;
+}
+
 /** The exact stored rent in 萬 for the edit form (602,140 → 「60.214」), so saving unchanged keeps it. */
-export function rentInput(yuan: number | null): string {
+export function toWanInput(yuan: number | null): string {
   return yuan ? String(yuan / 10_000) : "";
 }
 
 /** 萬 typed in a form → whole 元. Blank is null; anything that is not a positive number is NaN. */
-export function parseWan(text: string): number | null {
-  const t = text.replace(/[,\s]/g, "").replace(/萬$/, "");
-  if (!t) return null;
-  if (!/^\d+(?:\.\d+)?$/.test(t) || Number(t) <= 0) return NaN;
-  return Math.round(Number(t) * 10_000);
+export function fromWanInput(text: string): number | null {
+  const wan = parseAmount(text, "萬");
+  return wan === null || Number.isNaN(wan) ? wan : Math.round(wan * 10_000);
 }

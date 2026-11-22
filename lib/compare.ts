@@ -6,14 +6,20 @@ import type { Item } from "./types";
 
 export type Zone = { value: string; source: "" | "股東填寫" | "試算表商圈" | "地址" };
 
-/** 商圈或區域: the shareholder's value, else the sheet's 「商圈：X」 in the information, else the district in the address. */
-export function zoneOf(item: Item): Zone {
-  if (item.zone.trim()) return { value: item.zone.trim(), source: "股東填寫" };
+/** 商圈或區域 without the shareholder's value: the sheet's 「商圈：X」 in the information, else the district in the address. */
+export function autoZoneOf(item: Item): Zone {
   const sheet = item.info.match(/商圈：([^｜\n]+)/)?.[1].trim();
   if (sheet) return { value: sheet, source: "試算表商圈" };
-  const district = item.address.trim().match(/^(?:[一-鿿]{2}[市縣])?([一-鿿]{1,3}區)/)?.[1];
+  // An optional postal code and 台灣, then the city or county, then the district: 「106台北市大安區…」.
+  const district = item.address.trim().match(/^\d{0,6}(?:台灣|臺灣)?(?:[一-鿿]{2}[市縣])?([一-鿿]{1,3}區)/)?.[1];
   if (district) return { value: district, source: "地址" };
   return { value: "", source: "" };
+}
+
+/** 商圈或區域: the shareholder's value first, then the automatic one. */
+export function zoneOf(item: Item): Zone {
+  if (item.zone.trim()) return { value: item.zone.trim(), source: "股東填寫" };
+  return autoZoneOf(item);
 }
 
 function floorNumber(token: string): number | null {
@@ -47,8 +53,6 @@ export type QuickFilter = {
   groundFloor: boolean;
 };
 
-export const NO_QUICK_FILTER: QuickFilter = { maxRent: null, minArea: null, groundFloor: false };
-
 /** An item without the data a condition needs never matches that condition. */
 export function matchesQuick(item: Item, q: QuickFilter): boolean {
   if (q.maxRent !== null && (item.rent === null || item.rent > q.maxRent)) return false;
@@ -68,16 +72,23 @@ export const SORT_LABEL: Record<SortKey, string> = {
   areaDesc: "坪數大到小",
 };
 
+const BY_VALUE: Partial<Record<SortKey, { field: "rent" | "area"; dir: 1 | -1 }>> = {
+  rentAsc: { field: "rent", dir: 1 },
+  rentDesc: { field: "rent", dir: -1 },
+  areaAsc: { field: "area", dir: 1 },
+  areaDesc: { field: "area", dir: -1 },
+};
+
 /**
  * A sorted copy. Items without the value always come last, and equal values
  * keep the newest-first order.
  */
 export function sortItems(items: Item[], key: SortKey): Item[] {
   const newest = [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  if (key === "newest") return newest;
   if (key === "oldest") return newest.reverse();
-  const field = key.startsWith("rent") ? "rent" : "area";
-  const dir = key.endsWith("Asc") ? 1 : -1;
+  const by = BY_VALUE[key];
+  if (!by) return newest;
+  const { field, dir } = by;
   return newest.sort((a, b) => {
     const x = a[field];
     const y = b[field];
