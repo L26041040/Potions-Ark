@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { fetchPreview, type Preview } from "@/lib/preview";
 import { removePhotos } from "@/lib/photos";
+import { isDueForCheck } from "@/lib/health";
 import { mutate, NO_WRITE, readDoc } from "@/lib/store";
 import { isStatus, type ActionResult, type AddOutcome, type Doc, type Item, type ItemFields, type Photo, type Status } from "@/lib/types";
 import { cleanUrl, hostOf, nameFromText } from "@/lib/url";
@@ -85,6 +86,9 @@ function newItem(url: string, name: string, preview: Preview, who: string, now: 
     area: preview.area,
     photos: listingPhotos(preview.photos),
     embed: preview.embed,
+    health: preview.health,
+    healthAt: now,
+    healthReason: preview.healthReason,
     status: "new",
     note: "",
     noteBy: "",
@@ -175,6 +179,9 @@ export async function addManual(input: Partial<ItemFields>, nickname: unknown): 
         id,
         ...fields,
         photos: [],
+        health: "unchecked",
+        healthAt: null,
+        healthReason: "",
         status: "new",
         note: "",
         noteBy: "",
@@ -196,7 +203,10 @@ export async function updateItem(id: unknown, input: Partial<ItemFields>): Promi
     const fields = readFields(input ?? {});
     if (!fields.name) return { ok: false, error: "名稱不能空白" };
     const { doc } = await mutate((d) => {
-      Object.assign(findItem(d, id), fields, { updatedAt: new Date().toISOString() });
+      const item = findItem(d, id);
+      // A changed link has not been checked yet.
+      const relink = item.sourceUrl !== fields.sourceUrl ? { health: "unchecked" as const, healthAt: null, healthReason: "" } : {};
+      Object.assign(item, fields, relink, { updatedAt: new Date().toISOString() });
       return true;
     });
     return { ok: true, doc };
@@ -295,9 +305,18 @@ export async function refetchItem(id: unknown): Promise<ActionResult> {
     const current = findItem(await readDoc(), id);
     if (!current.sourceUrl) return { ok: false, error: "這個物件沒有原始網址" };
     const preview = await fetchPreview(current.sourceUrl);
-    if (!preview.fetched) return { ok: false, error: "讀不到原始網頁的資料（網站可能阻擋或已下架），原資料未變更" };
+    const checkedAt = new Date().toISOString();
+    if (!preview.fetched) {
+      // Photos and facts stay as they were; the link check itself is still recorded.
+      const { doc } = await mutate((d) => {
+        Object.assign(findItem(d, id), { health: preview.health, healthAt: checkedAt, healthReason: preview.healthReason });
+        return true;
+      });
+      return { ok: false, error: `讀不到原始網頁的資料（${preview.healthReason}），照片與資訊未變更`, doc };
+    }
     const { doc } = await mutate((d) => {
       const item = findItem(d, id);
+      Object.assign(item, { health: preview.health, healthAt: checkedAt, healthReason: preview.healthReason });
       const uploads = item.photos.filter((p) => p.source === "upload");
       item.photos = [...(preview.photos.length ? listingPhotos(preview.photos) : item.photos.filter((p) => p.source === "listing")), ...uploads];
       if (!item.coverUrl && preview.image) item.coverUrl = preview.image;
@@ -326,6 +345,42 @@ export async function deleteUpload(itemId: unknown, photoId: unknown): Promise<A
       return true;
     });
     if (removed?.pathname) await removePhotos([removed.pathname]).catch((e) => console.error("photo delete failed", e));
+    return { ok: true, doc };
+  });
+}
+
+const CHECKS_PER_CALL = 8;
+
+/**
+ * Re-checks the links of items that are due (24 hours since the last check,
+ * not 不考慮, not in the recycle bin). Called in the background when someone
+ * opens the warehouse; there is no schedule. One write per call.
+ */
+export async function recheckLinks(ids: unknown): Promise<ActionResult> {
+  return run(async () => {
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > CHECKS_PER_CALL) {
+      return { ok: false, error: "檢查清單不正確" };
+    }
+    const now = Date.now();
+    const before = await readDoc();
+    const due = before.items.filter((i) => ids.includes(i.id) && isDueForCheck(i, now));
+    if (!due.length) return { ok: true, doc: before };
+    const results = new Map<string, Preview>();
+    await mapLimit(due, 3, async (item) => {
+      results.set(item.id, await fetchPreview(item.sourceUrl));
+    });
+    const checkedAt = new Date().toISOString();
+    const { doc } = await mutate((d) => {
+      let changed = false;
+      for (const item of d.items) {
+        const preview = results.get(item.id);
+        // Someone else may have checked it meanwhile; then keep theirs.
+        if (!preview || !isDueForCheck(item, now)) continue;
+        Object.assign(item, { health: preview.health, healthAt: checkedAt, healthReason: preview.healthReason });
+        changed = true;
+      }
+      return changed ? true : NO_WRITE;
+    });
     return { ok: true, doc };
   });
 }

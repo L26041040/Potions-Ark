@@ -149,10 +149,28 @@ function Facts({ item }: { item: Item }) {
   );
 }
 
+function LinkHealth({ item }: { item: Item }) {
+  if (!item.sourceUrl) return null;
+  const when = item.healthAt ? `（${formatTime(item.healthAt)} 檢查）` : "";
+  if (item.health === "gone") {
+    return (
+      <p role="status" className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-800 ring-1 ring-rose-200">
+        原始刊登已失效：{item.healthReason}{when}。股東狀態、備註與留言都保留。
+      </p>
+    );
+  }
+  if (item.health === "unknown") {
+    return <p className="text-xs text-stone-500">無法確認原始刊登狀態：{item.healthReason}{when}</p>;
+  }
+  if (item.health === "ok") return <p className="text-xs text-stone-500">原始刊登正常{when}</p>;
+  return <p className="text-xs text-stone-500">原始刊登尚未檢查</p>;
+}
+
 function Preview(props: DetailProps & { item: Item }) {
   const { item } = props;
   return (
     <div className="space-y-4">
+      <LinkHealth item={item} />
       <PhotoViewer
         key={item.id}
         item={item}

@@ -31,6 +31,10 @@ export type Item = {
   photos: Photo[];
   embed: boolean;
   status: Status;
+  /** Link health of the original listing; independent of status. */
+  health: "unchecked" | "ok" | "gone" | "unknown";
+  healthAt: string | null;
+  healthReason: string;
   note: string;
   noteBy: string;
   noteAt: string | null;
@@ -91,6 +95,9 @@ export function normalizeItem(raw: Item): Item {
     rent: typeof raw.rent === "number" ? raw.rent : null,
     area: typeof raw.area === "number" ? raw.area : null,
     photos: Array.isArray(raw.photos) ? raw.photos : [],
+    health: raw.health ?? "unchecked",
+    healthAt: raw.healthAt ?? null,
+    healthReason: raw.healthReason ?? "",
   };
 }
 

@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { addComment, addManual, addUrls, deleteUpload, refetchItem, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
+import { addComment, addManual, addUrls, deleteUpload, recheckLinks, refetchItem, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
+import { isDueForCheck } from "@/lib/health";
 import { STATUS_LABEL, STATUSES, type ActionResult, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
 import { cleanUrl, extractAllUrls, extractUrl, nameFromText } from "@/lib/url";
-import { Cover, readNick, StatusBadge, storeNickname, useIsDesktop, useNickname } from "./bits";
+import { Cover, HealthBadge, readNick, StatusBadge, storeNickname, useIsDesktop, useNickname } from "./bits";
 import { BatchPanel, useBatchImport, type BatchState } from "./batch";
 import { DesktopDetail, MobileDetail, type DetailProps } from "./detail";
 import { ItemDialog, NicknameDialog } from "./dialogs";
 
-type Filter = "active" | Status | "trash";
+type Filter = "active" | Status | "trash" | "gone";
 type Dialog = { kind: "add" } | { kind: "edit"; id: string } | null;
 type Toast = { text: string; error?: boolean } | null;
 
@@ -17,11 +18,13 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: "active", label: "全部" },
   ...STATUSES.map((s) => ({ key: s as Filter, label: STATUS_LABEL[s] })),
   { key: "trash", label: "回收桶" },
+  { key: "gone", label: "已失效" },
 ];
 
 function matchesFilter(item: Item, filter: Filter): boolean {
   if (filter === "trash") return Boolean(item.deletedAt);
   if (item.deletedAt) return false;
+  if (filter === "gone") return item.health === "gone";
   if (filter === "active") return item.status !== "rejected";
   return item.status === filter;
 }
@@ -55,6 +58,25 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   const pasteRef = useRef<HTMLInputElement>(null);
   const [batchOpen, setBatchOpen] = useState(false);
   const batch = useBatchImport({ doc, setDoc, requireNick, onFinished: onBatchFinished });
+  const checkStarted = useRef(false);
+
+  // Opening the warehouse re-checks, in the background, links not checked in
+  // the last 24 hours (not 不考慮, not in the recycle bin). There is no schedule.
+  useEffect(() => {
+    if (checkStarted.current) return;
+    checkStarted.current = true;
+    const due = initialDoc.items.filter((i) => isDueForCheck(i, Date.now())).map((i) => i.id);
+    (async () => {
+      for (let i = 0; i < due.length; i += 8) {
+        try {
+          const res = await recheckLinks(due.slice(i, i + 8));
+          if (res.ok) setDoc(res.doc);
+        } catch {
+          return;
+        }
+      }
+    })();
+  }, [initialDoc]);
 
   const q = query.trim().toLowerCase();
   const visible = doc.items
@@ -382,6 +404,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                   <div className="relative aspect-[4/3] bg-stone-100">
                     <Cover item={item} className="absolute inset-0 h-full w-full" />
                     <StatusBadge status={item.status} className="absolute left-1.5 top-1.5 shadow-sm" />
+                    <HealthBadge item={item} className="absolute right-1.5 top-1.5 shadow-sm" />
                   </div>
                   <div className="p-2">
                     <div className="line-clamp-2 text-sm font-medium leading-snug">{item.name}</div>
@@ -408,6 +431,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                       <div className="truncate text-sm font-medium">{item.name}</div>
                       {item.info && <div className="truncate text-xs text-stone-500">{item.info}</div>}
                     </div>
+                    <HealthBadge item={item} />
                     <StatusBadge status={item.status} />
                   </button>
                 </li>

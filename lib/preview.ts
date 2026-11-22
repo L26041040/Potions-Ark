@@ -3,6 +3,7 @@ import http, { type IncomingMessage } from "node:http";
 import https from "node:https";
 import net from "node:net";
 import zlib from "node:zlib";
+import { classifyHealth, type Health, type PageResponse } from "./health";
 import { parseListing, type ListingDetails } from "./listing";
 import { parseMeta, type PageMeta } from "./meta";
 
@@ -14,7 +15,7 @@ const TIMEOUT_MS = 6000;
 const MAX_BYTES = 1024 * 1024;
 const MAX_REDIRECTS = 3;
 
-export type Preview = PageMeta & ListingDetails & { fetched: boolean; embed: boolean };
+export type Preview = PageMeta & ListingDetails & { fetched: boolean; embed: boolean; health: Health; healthReason: string };
 
 const blocked = new net.BlockList();
 for (const [addr, prefix] of [
@@ -88,7 +89,7 @@ function requestOnce(url: URL, signal: AbortSignal): Promise<RawResponse> {
       (res) => {
         const status = res.statusCode ?? 0;
         const type = String(res.headers["content-type"] ?? "");
-        if ((status >= 300 && status < 400) || !/html|xml/i.test(type)) {
+        if ((status >= 300 && status < 400) || !/html|xml|json|text\//i.test(type)) {
           res.resume();
           return resolve({ status, headers: res.headers, body: null });
         }
@@ -137,7 +138,7 @@ export function allowsEmbedding(headers: IncomingMessage["headers"]): boolean {
 
 export async function fetchPreview(rawUrl: string): Promise<Preview> {
   let url = new URL(rawUrl);
-  const fallback: Preview = {
+  const empty: Preview = {
     fetched: false,
     embed: url.protocol === "https:",
     title: "",
@@ -147,11 +148,17 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
     rent: null,
     area: null,
     address: "",
+    health: "unknown",
+    healthReason: "",
+  };
+  const failed = (error: PageResponse["error"], embed = empty.embed): Preview => {
+    const verdict = classifyHealth({ status: null, headers: {}, body: null, error });
+    return { ...empty, embed, health: verdict.health, healthReason: verdict.reason };
   };
   const signal = AbortSignal.timeout(TIMEOUT_MS);
   try {
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      if (!isAllowedUrl(url)) return { ...fallback, embed: false };
+      if (!isAllowedUrl(url)) return failed("blocked", false);
       const res = await requestOnce(url, signal);
       const location = res.headers.location;
       if (res.status >= 300 && res.status < 400 && location) {
@@ -159,13 +166,18 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
         continue;
       }
       const embed = url.protocol === "https:" && allowsEmbedding(res.headers);
-      if (res.status !== 200 || !res.body) return { ...fallback, embed };
+      const verdict = classifyHealth({ status: res.status, headers: res.headers, body: res.body });
+      const base = { ...empty, embed, health: verdict.health, healthReason: verdict.reason };
+      if (res.status !== 200 || !res.body || verdict.health === "gone") return base;
       const meta = parseMeta(res.body, url);
       const details = parseListing(res.body, url, meta.description);
-      return { ...meta, ...details, fetched: Boolean(meta.title || meta.image || meta.description || details.photos.length), embed };
+      return { ...base, ...meta, ...details, fetched: Boolean(meta.title || meta.image || meta.description || details.photos.length) };
     }
-    return fallback;
-  } catch {
-    return fallback;
+    return failed("redirects");
+  } catch (error) {
+    const code = (error as { code?: string; name?: string } | null) ?? {};
+    if (code.code === "EBLOCKED") return failed("blocked", false);
+    if (code.name === "TimeoutError" || code.name === "AbortError" || signal.aborted) return failed("timeout");
+    return failed("network");
   }
 }

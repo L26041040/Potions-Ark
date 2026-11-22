@@ -443,6 +443,78 @@ async function cardCount(page) {
     return `上傳後 ${size.w}x${size.h} 已載入（原本 ${before}）；超過 4 MB、偽裝檔、不存在與回收桶物件都被拒${cap}${refetch}`;
   });
 
+  await check("20 連結健康：被擋或讀不到是「無法確認」，下架才是「已失效」", async () => {
+    await page.reload();
+    await page.getByRole("group", { name: "狀態篩選" }).getByRole("button", { name: /^全部/ }).click();
+    const internalCard = page.locator("[data-item-id]").filter({ hasText: "來自 127.0.0.1" }).first();
+    await internalCard.getByText("無法確認").waitFor();
+    assert.strictEqual(await internalCard.getByText("已失效").count(), 0, "讀不到的內部位址被標成已失效");
+    if (!REAL) return "本機：讀不到的位址標為「無法確認」（真實下架與 403 樣本在雲端驗）";
+    const results = [];
+    const removed = "https://business.591.com.tw/rent/20024768";
+    const blocked = "https://www.rakuya.com.tw/rent_item/info?ehid=0000000000";
+    for (const url of [removed, blocked]) {
+      if ((await page.locator(`[data-source-url="${url}"]`).count()) === 0) {
+        await paste(page, url);
+        await page.waitForFunction((u) => document.querySelector(`[data-source-url="${u}"]`), url, { timeout: 30000 });
+      }
+    }
+    const goneCard = page.locator(`[data-source-url="${removed}"]`).first();
+    await goneCard.getByText("已失效").waitFor();
+    results.push("已下架 591（404）→ 已失效");
+    const blockedCard = page.locator(`[data-source-url="${blocked}"]`).first();
+    await blockedCard.getByText("無法確認").waitFor();
+    assert.strictEqual(await blockedCard.getByText("已失效").count(), 0);
+    results.push("樂屋網（403）→ 無法確認");
+    await page.getByRole("group", { name: "狀態篩選" }).getByRole("button", { name: /^已失效/ }).click();
+    await page.locator(`[data-source-url="${removed}"]`).first().waitFor();
+    assert.strictEqual(await page.locator(`[data-source-url="${blocked}"]`).count(), 0, "無法確認的物件出現在已失效篩選");
+    await page.locator(`[data-source-url="${removed}"]`).first().click();
+    await page.getByRole("region", { name: "物件瀏覽" }).getByText(/原始刊登已失效/).waitFor();
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "關閉", exact: true }).click();
+    await page.getByRole("group", { name: "狀態篩選" }).getByRole("button", { name: /^全部/ }).click();
+    await page.locator(`[data-item-id="${listingId}"]`).first().click();
+    await page.getByRole("region", { name: "物件瀏覽" }).getByText(/原始刊登正常/).waitFor();
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "關閉", exact: true }).click();
+    results.push("在架 591 → 正常");
+    return results.join("；");
+  });
+
+  if (process.env.LOCAL_DATA) {
+    await check("21 到期重檢：只在開啟倉庫時、只檢查超過 24 小時且非不考慮／回收桶的物件", async () => {
+      const fs = require("fs");
+      const file = process.env.LOCAL_DATA;
+      const data = JSON.parse(fs.readFileSync(file, "utf8"));
+      const day = 24 * 60 * 60 * 1000;
+      const old = new Date(Date.now() - 2 * day).toISOString();
+      const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const linked = data.items.filter((i) => i.sourceUrl && !i.deletedAt && i.status !== "rejected");
+      const [due, fresh, rejected, trashed] = linked.slice(0, 4);
+      Object.assign(due, { health: "ok", healthAt: old, healthReason: "正常" });
+      Object.assign(fresh, { health: "ok", healthAt: recent, healthReason: "正常" });
+      Object.assign(rejected, { status: "rejected", health: "ok", healthAt: old, healthReason: "正常" });
+      Object.assign(trashed, { deletedAt: recent, health: "ok", healthAt: old, healthReason: "正常" });
+      fs.writeFileSync(file, JSON.stringify(data));
+      // Nobody has the warehouse open: nothing may change.
+      await page.goto("about:blank");
+      await new Promise((r) => setTimeout(r, 3000));
+      assert.strictEqual(fs.readFileSync(file, "utf8"), JSON.stringify(data), "沒人開倉庫時資料被改了");
+      await page.goto(BASE);
+      const byId = () => Object.fromEntries(JSON.parse(fs.readFileSync(file, "utf8")).items.map((i) => [i.id, i]));
+      let after = byId();
+      for (let t = 0; t < 40 && after[due.id].healthAt === old; t++) {
+        await new Promise((r) => setTimeout(r, 250));
+        after = byId();
+      }
+      assert.notStrictEqual(after[due.id].healthAt, old, "到期的物件沒有被重新檢查");
+      assert.strictEqual(after[fresh.id].healthAt, recent, "未滿 24 小時的物件被重檢");
+      assert.strictEqual(after[rejected.id].healthAt, old, "不考慮的物件被重檢");
+      assert.strictEqual(after[trashed.id].healthAt, old, "回收桶的物件被重檢");
+      assert.strictEqual(after[rejected.id].status, "rejected", "股東狀態被改了");
+      return `到期物件已重檢（${after[due.id].health}：${after[due.id].healthReason}），其他三個未動`;
+    });
+  }
+
   await browser.close();
   internal.close();
   const failed = results.filter((r) => !r.ok);
