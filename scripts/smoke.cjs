@@ -143,15 +143,24 @@ async function cardCount(page) {
     await page.locator(`[data-item-id="${listingId}"]`).first().click();
     const region = page.getByRole("region", { name: "物件瀏覽" });
     await region.waitFor();
+    try {
     assert.strictEqual(await region.locator("iframe").count(), 0, "預設就嵌入了 iframe");
-    let detail;
+    let detail = "";
     if (REAL) {
+      const thumbList = region.getByRole("list", { name: "照片縮圖" }).getByRole("listitem");
+      const listingThumbs = region.getByRole("list", { name: "照片縮圖" }).locator('[data-photo-source="listing"]');
+      if ((await listingThumbs.count()) < 2) {
+        // Saved by an older version: only a cover. Reloading must bring in the photos without re-creating the item.
+        await region.getByRole("button", { name: "重新取得照片與資訊", exact: true }).click();
+        await page.getByText("已重新取得照片與資訊").waitFor({ timeout: 30000 });
+        await listingThumbs.nth(1).waitFor();
+        detail = "舊物件按「重新取得」後帶入照片；";
+      }
       const main = region.locator('img[data-photo-source="listing"]').first();
       const size = await loadedImage(main);
-      const thumbs = await region.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").count();
-      assert.ok(thumbs >= 2, `只有 ${thumbs} 張照片`);
-      const second = region.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").nth(1);
-      await second.click();
+      const thumbs = await listingThumbs.count();
+      assert.ok(thumbs >= 2, `只有 ${thumbs} 張 591 照片`);
+      await listingThumbs.nth(1).click();
       const size2 = await loadedImage(region.locator('img[data-photo-source="listing"]').first());
       await region.getByText("月租金").waitFor();
       await region.getByText("坪數").first().waitFor();
@@ -162,7 +171,7 @@ async function cardCount(page) {
       await page.keyboard.press("Escape");
       await box.waitFor({ state: "detached" });
       assert.ok(await region.isVisible(), "按 Esc 連面板一起關掉了");
-      detail = `591 照片 ${thumbs} 張，第一張 ${size.w}x${size.h}、第二張 ${size2.w}x${size2.h} 已在瀏覽器載入`;
+      detail += `591 照片 ${thumbs} 張，第一張 ${size.w}x${size.h}、第二張 ${size2.w}x${size2.h} 已在瀏覽器載入`;
     } else {
       await region.getByRole("button", { name: "上傳照片或截圖", exact: true }).first().waitFor();
       detail = "本機讀不到 591，只確認預覽區與上傳按鈕";
@@ -176,9 +185,11 @@ async function cardCount(page) {
       assert.strictEqual(await region.locator("iframe").count(), 0);
       detail += "；iframe 可選配開啟";
     }
-    await region.getByRole("button", { name: "關閉", exact: true }).click();
-    await region.waitFor({ state: "detached" });
     return detail;
+    } finally {
+      if (await region.count()) await region.getByRole("button", { name: "關閉", exact: true }).click();
+      await region.waitFor({ state: "detached" });
+    }
   });
 
   await check("4 同一網址（加追蹤參數）再貼一次：只提示已存在，不跳轉", async () => {
@@ -324,7 +335,7 @@ async function cardCount(page) {
     await m.getByRole("button", { name: "開啟原始網頁 ↗", exact: true }).waitFor();
     assert.strictEqual(await m.locator("iframe").count(), 0, "手機不該嵌入");
     await m.getByRole("button", { name: "確定考慮", exact: true }).click();
-    await m.getByText(/改為「確定考慮」/).waitFor();
+    await m.getByText(new RegExp(`手機${stamp} 將狀態從「[^」]+」改為「確定考慮」`)).waitFor();
     await m.getByLabel("留言", { exact: true }).fill(`手機留言 ${stamp}`);
     await m.getByRole("button", { name: "送出留言", exact: true }).click();
     await m.getByText(`手機留言 ${stamp}`).waitFor();
@@ -384,7 +395,10 @@ async function cardCount(page) {
     const size = await loadedImage(uploaded);
     // Survives a reload and shows on another device.
     await page.reload();
-    await loadedImage(page.getByRole("region", { name: "物件瀏覽" }).locator('img[data-photo-source="upload"]'));
+    const reloaded = page.getByRole("region", { name: "物件瀏覽" });
+    const reThumbs = reloaded.getByRole("list", { name: "照片縮圖" }).getByRole("listitem");
+    if (await reThumbs.count()) await reThumbs.last().click();
+    await loadedImage(reloaded.locator('img[data-photo-source="upload"]'));
     const other = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     await stubExternal(other);
     const p2 = await other.newPage();
@@ -452,7 +466,7 @@ async function cardCount(page) {
   await check("20 連結健康：被擋或讀不到是「無法確認」，下架才是「已失效」", async () => {
     await page.reload();
     await page.getByRole("group", { name: "狀態篩選" }).getByRole("button", { name: /^全部/ }).click();
-    const internalCard = page.locator("[data-item-id]").filter({ hasText: "來自 127.0.0.1" }).first();
+    const internalCard = page.locator(`[data-source-url="http://127.0.0.1:4599/seq-${stamp}-1"]`).first();
     await internalCard.getByText("無法確認").waitFor();
     assert.strictEqual(await internalCard.getByText("已失效").count(), 0, "讀不到的內部位址被標成已失效");
     if (!REAL) return "本機：讀不到的位址標為「無法確認」（真實下架與 403 樣本在雲端驗）";

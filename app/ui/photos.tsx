@@ -183,6 +183,7 @@ export function PhotoViewer({
               type="button"
               role="listitem"
               onClick={() => setIndex(i)}
+              data-photo-source={p.source}
               className={`h-14 w-20 shrink-0 overflow-hidden rounded-md bg-stone-200 ring-2 ${i === at ? "ring-stone-900" : "ring-transparent"}`}
               aria-label={`第 ${i + 1} 張照片`}
             >
