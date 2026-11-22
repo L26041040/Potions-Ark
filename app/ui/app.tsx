@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { addComment, addManual, addUrls, deleteUpload, recheckLinks, refetchItem, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
+import { addComment, addManual, addUrls, deleteUpload, refetchItem, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
 import { isDueForCheck } from "@/lib/health";
 import { STATUS_LABEL, STATUSES, type ActionResult, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
 import { cleanUrl, extractAllUrls, extractUrl, nameFromText } from "@/lib/url";
@@ -69,7 +69,12 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
     (async () => {
       for (let i = 0; i < due.length; i += 8) {
         try {
-          const res = await recheckLinks(due.slice(i, i + 8));
+          const response = await fetch("/api/recheck", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ids: due.slice(i, i + 8) }),
+          });
+          const res = (await response.json()) as ActionResult;
           if (res.ok) setDoc(res.doc);
         } catch {
           return;
@@ -182,10 +187,10 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
    * After adding, the shareholder stays in the warehouse so the next link can be
    * pasted right away. The panel only opens when a card is clicked.
    */
-  function showAdded(id: string) {
+  function showAdded(id?: string) {
     setQuery("");
     if (filter !== "active" && filter !== "new") setFilter("active");
-    setScrollTo({ id });
+    if (id) setScrollTo({ id });
   }
 
   function resetPasteBox() {
@@ -194,8 +199,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   }
 
   function onBatchFinished(result: BatchState) {
-    setQuery("");
-    if (filter !== "active" && filter !== "new") setFilter("active");
+    showAdded();
     setToast({
       text: `批量收藏完成：成功 ${result.added}（需補填 ${result.needsFill}）、重複 ${result.duplicates}、失敗 ${result.failed.length}`,
       error: result.failed.length > 0,

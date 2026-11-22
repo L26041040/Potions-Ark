@@ -110,13 +110,19 @@ async function cardCount(page) {
     const before = await cardIds(page);
     await paste(page, `看看這間 ${LISTING}?utm_source=line`);
     const nickField = page.getByLabel("暱稱", { exact: true });
-    const asked = await nickField.waitFor({ timeout: 4000 }).then(() => true, () => false);
+    // Either the nickname is asked (first add) or, when an earlier run saved the
+    // listing, the "already saved" notice shows at once and fades after a few seconds.
+    const first = await Promise.race([
+      nickField.waitFor({ timeout: 25000 }).then(() => "nick", () => "none"),
+      page.getByText("這個物件已經在倉庫裡").waitFor({ timeout: 25000 }).then(() => "dup", () => "none"),
+    ]);
+    const asked = first === "nick";
     if (asked) {
       await nickField.fill(`測試員${stamp}`);
       await page.getByRole("dialog", { name: "你的暱稱" }).getByRole("button", { name: "確定", exact: true }).click();
+      await page.getByText(/^已收藏|這個物件已經在倉庫裡/).waitFor({ timeout: 25000 });
     }
-    await page.getByText(/^已收藏|這個物件已經在倉庫裡/).waitFor({ timeout: 25000 });
-    const existed = await page.getByText("這個物件已經在倉庫裡").isVisible();
+    const existed = !asked;
     if (!asked) {
       // The listing was saved by an earlier run, so no nickname was needed yet.
       await page.getByRole("button", { name: "設定暱稱", exact: true }).click();
@@ -373,7 +379,7 @@ async function cardCount(page) {
     await page.locator(`[data-item-id="${listingId}"]`).first().click();
     const region = page.getByRole("region", { name: "物件瀏覽" });
     const before = await region.locator("[aria-label='照片位置']").innerText().catch(() => "0 / 0");
-    await region.getByLabel("選擇照片", { exact: true }).setInputFiles({ name: "現場照.png", mimeType: "image/png", buffer: png });
+    await region.getByLabel("選擇照片", { exact: true }).first().setInputFiles({ name: "現場照.png", mimeType: "image/png", buffer: png });
     const uploaded = region.locator('img[data-photo-source="upload"]');
     const size = await loadedImage(uploaded);
     // Survives a reload and shows on another device.

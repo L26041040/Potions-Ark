@@ -36,10 +36,12 @@ async function uploadOne(itemId: string, file: File, nickname: string): Promise<
   return data.doc;
 }
 
-/** Photos to show: the listing's and the uploaded ones; the old cover when there is nothing else. */
+/** Photos to show: the listing's (or, without them, the existing cover), then the uploaded ones. */
 export function photosOf(item: Item): Photo[] {
-  if (item.photos.length) return item.photos;
-  return item.coverUrl ? [{ id: "cover", source: "listing", url: item.coverUrl }] : [];
+  const listing = item.photos.filter((p) => p.source === "listing");
+  const uploads = item.photos.filter((p) => p.source === "upload");
+  const cover: Photo[] = item.coverUrl ? [{ id: "cover", source: "listing", url: item.coverUrl }] : [];
+  return [...(listing.length ? listing : cover), ...uploads];
 }
 
 function Lightbox({ photos, index, onIndex, onClose }: { photos: Photo[]; index: number; onIndex: (i: number) => void; onClose: () => void }) {
@@ -146,8 +148,7 @@ export function PhotoViewer({
       <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl bg-stone-900">
         {failed.has(current.url) ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-stone-200">
-            <p className="text-sm">這張照片無法顯示（原站可能已移除）。可以上傳照片或截圖代替。</p>
-            {uploadButton}
+            <p className="text-sm">這張照片無法顯示（原站可能已移除）。可以用下方「上傳照片或截圖」代替。</p>
           </div>
         ) : (
           <button type="button" className="block h-full w-full" onClick={() => setZoom(true)} aria-label="放大檢視">

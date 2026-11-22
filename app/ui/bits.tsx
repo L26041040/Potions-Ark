@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
+import { HEALTH_LABEL } from "@/lib/health";
 import { STATUS_LABEL, STATUSES, type Item, type Status } from "@/lib/types";
 
 export const STATUS_STYLE: Record<Status, { badge: string; active: string }> = {
@@ -23,15 +24,15 @@ export function HealthBadge({ item, className = "" }: { item: Item; className?: 
   if (!item.sourceUrl || item.deletedAt) return null;
   if (item.health === "gone") {
     return (
-      <span className={`inline-flex shrink-0 items-center rounded-full bg-rose-600 px-2 py-0.5 text-xs font-semibold text-white ${className}`} title={item.healthReason}>
-        已失效
+      <span className={`inline-flex shrink-0 items-center rounded-full bg-rose-600 px-2 py-0.5 text-xs font-semibold text-white ${className}`} title={`${item.healthReason}（${formatTime(item.healthAt)} 檢查）`}>
+        {HEALTH_LABEL.gone}
       </span>
     );
   }
   if (item.health === "unknown") {
     return (
-      <span className={`inline-flex shrink-0 items-center rounded-full bg-white/90 px-1.5 py-0.5 text-[11px] text-stone-500 ring-1 ring-stone-300 ${className}`} title={`無法確認：${item.healthReason}`}>
-        無法確認
+      <span className={`inline-flex shrink-0 items-center rounded-full bg-white/90 px-1.5 py-0.5 text-[11px] text-stone-500 ring-1 ring-stone-300 ${className}`} title={`${item.healthReason}（${formatTime(item.healthAt)} 檢查）`}>
+        {HEALTH_LABEL.unknown}
       </span>
     );
   }

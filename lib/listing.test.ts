@@ -16,6 +16,10 @@ const listing = {
 const place = {
   "@type": "Place",
   name: "測試店面",
+  additionalProperty: [
+    { "@type": "PropertyValue", name: "樓層", value: "1F/5F" },
+    { "@type": "PropertyValue", name: "用途", value: "商業用" },
+  ],
   address: { addressRegion: "台北市", addressLocality: "大同區", streetAddress: "大同區民樂街99號" },
   image: [
     "https://img1.591.com.tw/house/2026/07/20/111.jpg!1000x.water2.jpg",
@@ -40,24 +44,25 @@ describe("parseListing", () => {
       rent: 45000,
       area: 24.33,
       address: "台北市大同區民樂街99號",
+      floor: "1F/5F",
     });
   });
 
-  it("does not take a sale price as monthly rent", () => {
-    const details = parseListing(page591([listing, place]), new URL("https://business.591.com.tw/sale/123"), "台北市大同區店面出售：總價5000萬");
-    expect(details.rent).toBeNull();
-    expect(details.photos).toHaveLength(2);
+  it("reads only shop rental pages: sale and residential pages keep just their cover, and a sale price is never rent", () => {
+    const none = { photos: [], rent: null, area: null, address: "", floor: "" };
+    expect(parseListing(page591([listing, place]), new URL("https://business.591.com.tw/sale/123"), "台北市大同區店面出售：總價5000萬")).toEqual(none);
+    expect(parseListing(page591([listing, place]), new URL("https://rent.591.com.tw/123"), description)).toEqual(none);
   });
 
   it("leaves fields empty instead of failing when the page has no usable data", () => {
-    const empty = { photos: [], rent: null, area: null, address: "" };
+    const empty = { photos: [], rent: null, area: null, address: "", floor: "" };
     expect(parseListing("<html><head></head></html>", new URL("https://business.591.com.tw/rent/1"), "")).toEqual(empty);
     expect(parseListing('<script type="application/ld+json">{not json</script>', new URL("https://business.591.com.tw/rent/1"), "")).toEqual(empty);
   });
 
   it("only reads structured data on 591, other sites keep just their cover image", () => {
     const details = parseListing(page591([listing, place]), new URL("https://www.example-realty.com.tw/rent/123"), description);
-    expect(details).toEqual({ photos: [], rent: null, area: null, address: "" });
+    expect(details).toEqual({ photos: [], rent: null, area: null, address: "", floor: "" });
   });
 });
 

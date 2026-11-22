@@ -64,11 +64,6 @@ function Actions({ item, onEdit, onDelete, onRestore, onRefetch }: { item: Item 
   return (
     <>
       {item.sourceUrl && <RefetchButton onRefetch={onRefetch} />}
-      {item.address && (
-        <a className={button} href={mapsUrl(item.address)} target="_blank" rel="noopener noreferrer">
-          Google Maps
-        </a>
-      )}
       <button type="button" className={button} onClick={onEdit}>編輯</button>
       {item.deletedAt ? (
         <button type="button" className={button} onClick={onRestore}>還原</button>
@@ -130,6 +125,7 @@ function Facts({ item }: { item: Item }) {
   const rows: [string, string][] = [];
   if (item.rent !== null) rows.push(["月租金", `NT$ ${MONEY.format(item.rent)}`]);
   if (item.area !== null) rows.push(["坪數", `${item.area} 坪`]);
+  if (item.floor) rows.push(["樓層", item.floor]);
   if (item.address) rows.push(["地址", item.address]);
   return (
     <section aria-label="物件資訊" className="space-y-2">
@@ -166,11 +162,11 @@ function LinkHealth({ item }: { item: Item }) {
   return <p className="text-xs text-stone-500">原始刊登尚未檢查</p>;
 }
 
-function Preview(props: DetailProps & { item: Item }) {
-  const { item } = props;
+/** The native preview, top to bottom: photos, name, facts, link health, status, original page and map. */
+function Summary(props: DetailProps & { item: Item; mobile?: boolean }) {
+  const { item, mobile } = props;
   return (
     <div className="space-y-4">
-      <LinkHealth item={item} />
       <PhotoViewer
         key={item.id}
         item={item}
@@ -180,7 +176,18 @@ function Preview(props: DetailProps & { item: Item }) {
         onDeleteUpload={props.onDeleteUpload}
         onError={props.onError}
       />
+      <h2 className="text-lg font-semibold leading-snug">{item.name}</h2>
       <Facts item={item} />
+      <LinkHealth item={item} />
+      <StatusButtons status={item.status} onChange={props.onStatus} />
+      <div className="flex flex-wrap gap-2">
+        {item.sourceUrl && <OpenSourceButton url={item.sourceUrl} big={mobile} />}
+        {item.address && (
+          <a className={button} href={mapsUrl(item.address)} target="_blank" rel="noopener noreferrer">
+            Google Maps
+          </a>
+        )}
+      </div>
     </div>
   );
 }
@@ -292,7 +299,7 @@ function NotFound({ onClose }: { onClose: () => void }) {
 }
 
 export function DesktopDetail(props: DetailProps) {
-  const { item, entries, onClose, onStatus } = props;
+  const { item, entries, onClose } = props;
   const [showDiscussion, setShowDiscussion] = useState(true);
   const [embedFor, setEmbedFor] = useState<string | null>(null);
   if (!item) return <NotFound onClose={onClose} />;
@@ -303,15 +310,12 @@ export function DesktopDetail(props: DetailProps) {
       <div className="shrink-0 space-y-2 border-b px-3 py-2">
         <div className="flex items-center gap-2">
           <NavButtons {...props} />
-          <h2 className="min-w-0 flex-1 truncate text-base font-semibold" title={item.name}>{item.name}</h2>
+          <div className="flex-1" />
           <button type="button" onClick={onClose} className="rounded-lg px-2.5 py-1 text-lg leading-none text-stone-500 hover:bg-stone-100" aria-label="關閉">
             ✕
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <StatusButtons status={item.status} onChange={onStatus} />
-          <span className="mx-0.5 hidden h-5 w-px bg-stone-200 xl:block" />
-          {item.sourceUrl && <OpenSourceButton url={item.sourceUrl} />}
           <Actions {...props} item={item} />
           {item.sourceUrl && item.embed && (
             <button type="button" className={button} aria-pressed={showEmbed} onClick={() => setEmbedFor(showEmbed ? null : item.id)}>
@@ -330,7 +334,7 @@ export function DesktopDetail(props: DetailProps) {
             <EmbedView item={item} />
           ) : (
             <div className="mx-auto max-w-3xl p-4">
-              <Preview {...props} item={item} />
+              <Summary {...props} item={item} />
             </div>
           )}
         </div>
@@ -345,7 +349,7 @@ export function DesktopDetail(props: DetailProps) {
 }
 
 export function MobileDetail(props: DetailProps) {
-  const { item, onClose, onStatus } = props;
+  const { item, onClose } = props;
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-white">
       <div className="flex shrink-0 items-center gap-2 border-b px-2 py-2">
@@ -361,10 +365,7 @@ export function MobileDetail(props: DetailProps) {
         <div className="min-h-0 flex-1 overflow-y-auto">
           <DeletedBanner item={item} onRestore={props.onRestore} />
           <div className="space-y-3 p-4">
-            <h2 className="text-lg font-semibold leading-snug">{item.name}</h2>
-            <Preview {...props} item={item} />
-            <StatusButtons status={item.status} onChange={onStatus} />
-            {item.sourceUrl && <OpenSourceButton url={item.sourceUrl} big />}
+            <Summary {...props} item={item} mobile />
             <div className="flex flex-wrap gap-2">
               <Actions {...props} item={item} />
             </div>

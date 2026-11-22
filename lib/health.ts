@@ -2,9 +2,9 @@
 // four decision statuses. "gone" is only used when the site clearly says so;
 // anything uncertain (blocked, challenged, timed out, errors) is "unknown".
 
-import type { Item } from "./types";
+import type { Health, Item } from "./types";
 
-export type Health = "unchecked" | "ok" | "gone" | "unknown";
+export type { Health };
 
 export const HEALTH_LABEL: Record<Health, string> = {
   unchecked: "待檢查",

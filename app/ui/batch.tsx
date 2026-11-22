@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { addUrls } from "@/app/actions";
 import type { ActionResult, Doc } from "@/lib/types";
 import { extractAllUrls } from "@/lib/url";
 
@@ -58,7 +57,12 @@ export function useBatchImport({
       const chunk = todo.slice(i, i + CHUNK);
       let res: ActionResult;
       try {
-        res = await addUrls(chunk, nick);
+        const response = await fetch("/api/add", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ entries: chunk, nickname: nick }),
+        });
+        res = (await response.json()) as ActionResult;
       } catch {
         res = { ok: false, error: "連線失敗" };
       }

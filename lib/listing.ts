@@ -6,6 +6,7 @@ export type ListingDetails = {
   rent: number | null;
   area: number | null;
   address: string;
+  floor: string;
 };
 
 const MAX_PHOTOS = 30;
@@ -48,9 +49,14 @@ export function is591(url: URL): boolean {
   return url.hostname === "591.com.tw" || url.hostname.endsWith(".591.com.tw");
 }
 
+/** Only 591 shop rental pages are read in detail; every other page keeps its og:image cover. */
+export function isShopRental591(url: URL): boolean {
+  return url.hostname === "business.591.com.tw" && /^\/rent\/\d+/.test(url.pathname);
+}
+
 export function parseListing(html: string, pageUrl: URL, description: string): ListingDetails {
-  const details: ListingDetails = { photos: [], rent: null, area: null, address: "" };
-  if (!is591(pageUrl)) return details;
+  const details: ListingDetails = { photos: [], rent: null, area: null, address: "", floor: "" };
+  if (!isShopRental591(pageUrl)) return details;
   const nodes = jsonLdNodes(html);
 
   const seen = new Set<string>();
@@ -68,12 +74,19 @@ export function parseListing(html: string, pageUrl: URL, description: string): L
     if (details.photos.length) break;
   }
 
-  // offers.price is the monthly rent only on rental pages; on sale pages it is the total price.
-  if (/\/rent\//.test(pageUrl.pathname)) {
-    for (const node of nodes) {
-      if (!typesOf(node).includes("RealEstateListing")) continue;
-      const price = Number((node.offers as Node | undefined)?.price);
-      if (Number.isFinite(price) && price > 0) details.rent = Math.round(price);
+  for (const node of nodes) {
+    if (!typesOf(node).includes("RealEstateListing")) continue;
+    const price = Number((node.offers as Node | undefined)?.price);
+    if (Number.isFinite(price) && price > 0) details.rent = Math.round(price);
+  }
+
+  for (const node of nodes) {
+    const props = node.additionalProperty;
+    if (!Array.isArray(props)) continue;
+    const floor = props.find((p) => str((p as Node | null)?.name) === "樓層") as Node | undefined;
+    if (floor) {
+      details.floor = str(floor.value).slice(0, 40);
+      break;
     }
   }
 

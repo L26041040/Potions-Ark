@@ -5,7 +5,7 @@ import { fetchPreview, type Preview } from "@/lib/preview";
 import { removePhotos } from "@/lib/photos";
 import { isDueForCheck } from "@/lib/health";
 import { mutate, NO_WRITE, readDoc } from "@/lib/store";
-import { isStatus, type ActionResult, type AddOutcome, type Doc, type Item, type ItemFields, type Photo, type Status } from "@/lib/types";
+import { isStatus, type ActionResult, type AddOutcome, type Doc, type Item, type ItemFields, type LinkCheck, type Photo, type Status } from "@/lib/types";
 import { cleanUrl, hostOf, nameFromText } from "@/lib/url";
 
 // No login: every visitor may read and write. Inputs are still validated and
@@ -70,6 +70,12 @@ async function mapLimit<T, R>(items: T[], limit: number, work: (item: T) => Prom
   return results;
 }
 
+function linkCheck(preview: Preview, at: string): LinkCheck {
+  return { health: preview.health, healthAt: at, healthReason: preview.healthReason };
+}
+
+const UNCHECKED: LinkCheck = { health: "unchecked", healthAt: null, healthReason: "" };
+
 function listingPhotos(urls: string[]): Photo[] {
   return urls.map((url) => ({ id: newId(), source: "listing", url }));
 }
@@ -84,11 +90,10 @@ function newItem(url: string, name: string, preview: Preview, who: string, now: 
     address: preview.address,
     rent: preview.rent,
     area: preview.area,
+    floor: preview.floor,
     photos: listingPhotos(preview.photos),
     embed: preview.embed,
-    health: preview.health,
-    healthAt: now,
-    healthReason: preview.healthReason,
+    ...linkCheck(preview, now),
     status: "new",
     note: "",
     noteBy: "",
@@ -129,12 +134,14 @@ export async function addUrls(input: unknown, nickname: unknown): Promise<Action
     });
 
     const now = new Date().toISOString();
+    // Rebuilt on every attempt: mutate() re-runs this callback after a write conflict.
+    let decided: AddOutcome[] = [];
     const { doc } = await mutate((d) => {
-      const decided: AddOutcome[] = [];
+      decided = [];
       for (const c of candidates) {
         const preview = previews.get(c.url);
         // A share link (591.to) is saved as the listing it points to, so it matches the web link too.
-        const listingUrl = (preview?.finalUrl && cleanUrl(preview.finalUrl)) || c.url;
+        const listingUrl = (preview?.listingUrl && cleanUrl(preview.listingUrl)) || c.url;
         const existing = sameUrl(d, c.url) ?? sameUrl(d, listingUrl);
         if (existing || !preview) {
           decided.push({ url: c.url, result: "duplicate", id: existing?.id });
@@ -144,10 +151,9 @@ export async function addUrls(input: unknown, nickname: unknown): Promise<Action
         d.items.push(item);
         decided.push({ url: c.url, result: "added", id: item.id, needsFill: !preview.fetched });
       }
-      outcomes.push(...decided);
       return decided.some((o) => o.result === "added") ? true : NO_WRITE;
     });
-    return { ok: true, doc, outcomes };
+    return { ok: true, doc, outcomes: [...outcomes, ...decided] };
   });
 }
 
@@ -161,6 +167,7 @@ function readFields(input: Partial<ItemFields>): ItemFields {
     address: text(input.address, 200),
     rent: positiveNumber(input.rent, 100_000_000),
     area: positiveNumber(input.area, 100_000),
+    floor: text(input.floor, 40),
     embed: typeof input.embed === "boolean" ? input.embed : sourceUrl.startsWith("https:"),
   };
 }
@@ -181,9 +188,7 @@ export async function addManual(input: Partial<ItemFields>, nickname: unknown): 
         id,
         ...fields,
         photos: [],
-        health: "unchecked",
-        healthAt: null,
-        healthReason: "",
+        ...UNCHECKED,
         status: "new",
         note: "",
         noteBy: "",
@@ -207,7 +212,7 @@ export async function updateItem(id: unknown, input: Partial<ItemFields>): Promi
     const { doc } = await mutate((d) => {
       const item = findItem(d, id);
       // A changed link has not been checked yet.
-      const relink = item.sourceUrl !== fields.sourceUrl ? { health: "unchecked" as const, healthAt: null, healthReason: "" } : {};
+      const relink = item.sourceUrl !== fields.sourceUrl ? UNCHECKED : {};
       Object.assign(item, fields, relink, { updatedAt: new Date().toISOString() });
       return true;
     });
@@ -311,16 +316,16 @@ export async function refetchItem(id: unknown): Promise<ActionResult> {
     if (!preview.fetched) {
       // Photos and facts stay as they were; the link check itself is still recorded.
       const { doc } = await mutate((d) => {
-        Object.assign(findItem(d, id), { health: preview.health, healthAt: checkedAt, healthReason: preview.healthReason });
+        Object.assign(findItem(d, id), linkCheck(preview, checkedAt));
         return true;
       });
       return { ok: false, error: `讀不到原始網頁的資料（${preview.healthReason}），照片與資訊未變更`, doc };
     }
     const { doc } = await mutate((d) => {
       const item = findItem(d, id);
-      Object.assign(item, { health: preview.health, healthAt: checkedAt, healthReason: preview.healthReason });
+      Object.assign(item, linkCheck(preview, checkedAt));
       // A saved share link (591.to) is replaced by the listing it points to, unless another item already has it.
-      const listingUrl = preview.finalUrl ? cleanUrl(preview.finalUrl) : null;
+      const listingUrl = preview.listingUrl ? cleanUrl(preview.listingUrl) : null;
       if (listingUrl && listingUrl !== item.sourceUrl && !sameUrl(d, listingUrl)) item.sourceUrl = listingUrl;
       const uploads = item.photos.filter((p) => p.source === "upload");
       item.photos = [...(preview.photos.length ? listingPhotos(preview.photos) : item.photos.filter((p) => p.source === "listing")), ...uploads];
@@ -329,7 +334,7 @@ export async function refetchItem(id: unknown): Promise<ActionResult> {
       if (!item.address && preview.address) item.address = preview.address;
       if (item.rent === null && preview.rent !== null) item.rent = preview.rent;
       if (item.area === null && preview.area !== null) item.area = preview.area;
-      item.embed = preview.embed;
+      if (!item.floor && preview.floor) item.floor = preview.floor;
       item.updatedAt = new Date().toISOString();
       return true;
     });
@@ -381,7 +386,7 @@ export async function recheckLinks(ids: unknown): Promise<ActionResult> {
         const preview = results.get(item.id);
         // Someone else may have checked it meanwhile; then keep theirs.
         if (!preview || !isDueForCheck(item, now)) continue;
-        Object.assign(item, { health: preview.health, healthAt: checkedAt, healthReason: preview.healthReason });
+        Object.assign(item, linkCheck(preview, checkedAt));
         changed = true;
       }
       return changed ? true : NO_WRITE;

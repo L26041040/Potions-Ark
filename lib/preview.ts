@@ -21,8 +21,8 @@ export type Preview = PageMeta &
     embed: boolean;
     health: Health;
     healthReason: string;
-    /** The listing's own address after share links and redirects; empty when unknown. */
-    finalUrl: string;
+    /** Set only when a 591 app share link was resolved: the listing it points to. */
+    listingUrl: string;
   };
 
 const blocked = new net.BlockList();
@@ -145,7 +145,15 @@ export function allowsEmbedding(headers: IncomingMessage["headers"]): boolean {
 }
 
 export async function fetchPreview(rawUrl: string): Promise<Preview> {
-  let url = resolve591Share(new URL(rawUrl));
+  // Other sites' redirects (for example a removed listing sent to a home page)
+  // must never replace the saved link, so only a resolved share link is reported.
+  let listingUrl = "";
+  const follow = (target: URL): URL => {
+    const resolved = resolve591Share(target);
+    if (resolved !== target) listingUrl = resolved.toString();
+    return resolved;
+  };
+  let url = follow(new URL(rawUrl));
   const empty: Preview = {
     fetched: false,
     embed: url.protocol === "https:",
@@ -156,13 +164,14 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
     rent: null,
     area: null,
     address: "",
+    floor: "",
     health: "unknown",
     healthReason: "",
-    finalUrl: "",
+    listingUrl: "",
   };
   const failed = (error: PageResponse["error"], embed = empty.embed): Preview => {
     const verdict = classifyHealth({ status: null, headers: {}, body: null, error });
-    return { ...empty, embed, health: verdict.health, healthReason: verdict.reason };
+    return { ...empty, embed, health: verdict.health, healthReason: verdict.reason, listingUrl };
   };
   const signal = AbortSignal.timeout(TIMEOUT_MS);
   try {
@@ -171,13 +180,15 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
       const res = await requestOnce(url, signal);
       const location = res.headers.location;
       if (res.status >= 300 && res.status < 400 && location) {
-        url = resolve591Share(new URL(location, url));
+        url = follow(new URL(location, url));
         continue;
       }
       const embed = url.protocol === "https:" && allowsEmbedding(res.headers);
       const verdict = classifyHealth({ status: res.status, headers: res.headers, body: res.body });
-      const base = { ...empty, embed, health: verdict.health, healthReason: verdict.reason, finalUrl: url.toString() };
-      if (res.status !== 200 || !res.body || verdict.health === "gone") return base;
+      const base = { ...empty, embed, health: verdict.health, healthReason: verdict.reason, listingUrl };
+      // Non-HTML bodies (JSON error pages) only feed the health check above.
+      const isHtml = /html|xml/i.test(String(res.headers["content-type"] ?? ""));
+      if (res.status !== 200 || !res.body || !isHtml || verdict.health === "gone") return base;
       const meta = parseMeta(res.body, url);
       const details = parseListing(res.body, url, meta.description);
       return { ...base, ...meta, ...details, fetched: Boolean(meta.title || meta.image || meta.description || details.photos.length) };

@@ -10,6 +10,41 @@ function fail(status: number, error: string) {
   return Response.json({ ok: false, error }, { status });
 }
 
+/** Reads the body but stops as soon as it passes the limit, even without a Content-Length header. */
+async function readCapped(request: Request): Promise<Uint8Array | null> {
+  const reader = request.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > MAX_UPLOAD_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
+}
+
+function nicknameOf(request: Request): string {
+  let raw = request.headers.get("x-nickname") ?? "";
+  try {
+    raw = decodeURIComponent(raw);
+  } catch {
+    // Keep the raw header when it is not valid percent-encoding.
+  }
+  return raw.replace(/\s+/g, " ").trim().slice(0, 20) || "匿名";
+}
+
 function uploadsOf(item: { photos: { source: string }[] }) {
   return item.photos.filter((p) => p.source === "upload").length;
 }
@@ -18,9 +53,9 @@ export async function POST(request: Request, { params }: RouteContext<"/api/item
   const { id } = await params;
   const declared = Number(request.headers.get("content-length") ?? 0);
   if (declared > MAX_UPLOAD_BYTES) return fail(413, "照片超過 4 MB");
-  const bytes = new Uint8Array(await request.arrayBuffer());
+  const bytes = await readCapped(request);
+  if (!bytes) return fail(413, "照片超過 4 MB");
   if (bytes.length === 0) return fail(400, "沒有收到照片");
-  if (bytes.length > MAX_UPLOAD_BYTES) return fail(413, "照片超過 4 MB");
   const kind = sniffImage(bytes);
   if (!kind) return fail(415, "只接受 JPEG、PNG、WebP 照片");
 
@@ -28,7 +63,7 @@ export async function POST(request: Request, { params }: RouteContext<"/api/item
   if (!item || item.deletedAt) return fail(404, "找不到這個物件，或它在回收桶裡");
   if (uploadsOf(item) >= MAX_UPLOADS_PER_ITEM) return fail(409, `每個物件最多上傳 ${MAX_UPLOADS_PER_ITEM} 張照片`);
 
-  const who = decodeURIComponent(request.headers.get("x-nickname") ?? "").replace(/\s+/g, " ").trim().slice(0, 20) || "匿名";
+  const who = nicknameOf(request);
   const pathname = await savePhoto(id, kind, bytes);
   try {
     const { doc, result } = await mutate((d) => {

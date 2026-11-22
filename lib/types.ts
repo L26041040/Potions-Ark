@@ -9,6 +9,12 @@ export const STATUS_LABEL: Record<Status, string> = {
   shortlisted: "確定考慮",
 };
 
+/** Link health of an item's original listing; independent of status. */
+export type Health = "unchecked" | "ok" | "gone" | "unknown";
+
+/** The result of one link check, always saved together. */
+export type LinkCheck = { health: Health; healthAt: string | null; healthReason: string };
+
 export type Photo = {
   id: string;
   /** "listing": shown straight from the listing site. "upload": stored in our Blob store. */
@@ -28,11 +34,11 @@ export type Item = {
   address: string;
   rent: number | null;
   area: number | null;
+  floor: string;
   photos: Photo[];
   embed: boolean;
   status: Status;
-  /** Link health of the original listing; independent of status. */
-  health: "unchecked" | "ok" | "gone" | "unknown";
+  health: Health;
   healthAt: string | null;
   healthReason: string;
   note: string;
@@ -70,6 +76,7 @@ export type ItemFields = {
   address: string;
   rent: number | null;
   area: number | null;
+  floor: string;
   embed: boolean;
 };
 
@@ -94,6 +101,7 @@ export function normalizeItem(raw: Item): Item {
     address: raw.address ?? "",
     rent: typeof raw.rent === "number" ? raw.rent : null,
     area: typeof raw.area === "number" ? raw.area : null,
+    floor: raw.floor ?? "",
     photos: Array.isArray(raw.photos) ? raw.photos : [],
     health: raw.health ?? "unchecked",
     healthAt: raw.healthAt ?? null,

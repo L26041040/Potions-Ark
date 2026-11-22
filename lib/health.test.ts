@@ -48,6 +48,7 @@ function item(over: Partial<Item>): Item {
     address: "",
     rent: null,
     area: null,
+    floor: "",
     photos: [],
     embed: true,
     status: "new",

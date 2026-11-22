@@ -85,6 +85,7 @@ export function ItemDialog({
     address: item?.address ?? "",
     rent: item?.rent ?? null,
     area: item?.area ?? null,
+    floor: item?.floor ?? "",
     embed: item?.embed ?? true,
   });
   const [rentText, setRentText] = useState(item?.rent != null ? String(item.rent) : "");
@@ -112,6 +113,9 @@ export function ItemDialog({
             <input value={areaText} onChange={(e) => setAreaText(e.target.value)} inputMode="decimal" placeholder="例如 24.5" className={input} />
           </Field>
         </div>
+        <Field label="樓層">
+          <input value={fields.floor} onChange={(e) => set("floor", e.target.value)} maxLength={40} placeholder="例如 1F/5F" className={input} />
+        </Field>
         <Field label="地址（填了才會出現 Google Maps 連結）">
           <input value={fields.address} onChange={(e) => set("address", e.target.value)} maxLength={200} className={input} />
         </Field>
