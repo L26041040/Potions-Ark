@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { addComment, addManual, addUrls, deleteUpload, refetchItem, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
 import { isDueForCheck } from "@/lib/health";
+import { findSameListing } from "@/lib/merge";
+import { matchesQuery } from "@/lib/search";
 import { STATUS_LABEL, STATUSES, type ActionResult, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
 import { cleanUrl, extractAllUrls, extractUrl, nameFromText } from "@/lib/url";
 import { Cover, HealthBadge, readNick, StatusBadge, storeNickname, useIsDesktop, useNickname } from "./bits";
@@ -29,10 +31,6 @@ function matchesFilter(item: Item, filter: Filter): boolean {
   return item.status === filter;
 }
 
-function matchesQuery(item: Item, q: string): boolean {
-  if (!q) return true;
-  return [item.name, item.info, item.address, item.note].some((t) => t.toLowerCase().includes(q));
-}
 
 function itemUrl(id: string | null): string {
   return id ? `${window.location.pathname}?item=${encodeURIComponent(id)}` : window.location.pathname;
@@ -42,7 +40,8 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   const [doc, setDoc] = useState(initialDoc);
   const [openId, setOpenId] = useState<string | null>(initialItemId);
   const [view, setView] = useState<"gallery" | "list">("gallery");
-  const [filter, setFilter] = useState<Filter>("active");
+  // The warehouse opens on what still needs discussing; every other filter is one tap away.
+  const [filter, setFilter] = useState<Filter>("new");
   const [query, setQuery] = useState("");
   const [paste, setPaste] = useState("");
   const [pasting, setPasting] = useState(false);
@@ -90,6 +89,12 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   const openItem = openId ? doc.items.find((i) => i.id === openId) ?? null : null;
   const index = openItem ? visible.findIndex((i) => i.id === openItem.id) : -1;
   const counts = Object.fromEntries(FILTERS.map((f) => [f.key, doc.items.filter((i) => matchesFilter(i, f.key)).length]));
+  // A search also tells which other filters hold matches, so nothing seems missing.
+  const elsewhere = q
+    ? FILTERS.filter((f) => f.key !== filter && f.key !== "active" && f.key !== "gone")
+        .map((f) => ({ ...f, n: doc.items.filter((i) => matchesFilter(i, f.key) && !matchesFilter(i, filter) && matchesQuery(i, q)).length }))
+        .filter((f) => f.n > 0)
+    : [];
 
   // ---- URL: ?item=<id> is the direct link; Back closes the panel. ----
   function openItemById(id: string) {
@@ -224,7 +229,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
       setToast({ text: "沒有找到網址，請改用「手動新增」", error: true });
       return;
     }
-    const dup = doc.items.find((i) => !i.deletedAt && i.sourceUrl === url);
+    const dup = findSameListing(doc.items, url, { includeDeleted: false });
     if (dup) {
       resetPasteBox();
       setToast({ text: "這個物件已經在倉庫裡" });
@@ -388,6 +393,21 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
             </div>
           </div>
 
+          {elsewhere.length > 0 && (
+            <p className="flex flex-wrap items-center gap-1.5 px-3 pt-2 text-xs text-stone-600" aria-label="其他分類的搜尋結果">
+              其他分類也有符合的物件：
+              {elsewhere.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setFilter(f.key)}
+                  className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-900 ring-1 ring-amber-200 hover:bg-amber-100"
+                >
+                  {f.label} {f.n}
+                </button>
+              ))}
+            </p>
+          )}
           {visible.length === 0 ? (
             <p className="px-4 py-16 text-center text-sm text-stone-500">
               {doc.items.length === 0 ? "還沒有物件。把 591 網址貼到上方，按「收藏」。" : "沒有符合的物件。"}

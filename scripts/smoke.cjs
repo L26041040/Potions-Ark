@@ -83,6 +83,23 @@ async function cardCount(page) {
   return page.locator("[data-item-id]").count();
 }
 
+/** Searching the title finds the listing (switching filters if the search says it is elsewhere). */
+async function search591(page, title, listing) {
+  await page.getByLabel("搜尋", { exact: true }).fill(title.slice(1, 7));
+  const hint = page.getByLabel("其他分類的搜尋結果").getByRole("button").first();
+  await Promise.race([page.locator(`[data-source-url="${listing}"]`).first().waitFor(), hint.waitFor()]);
+  if (!(await page.locator(`[data-source-url="${listing}"]`).count())) await hint.click();
+  await page.locator(`[data-source-url="${listing}"]`).first().waitFor();
+  await page.getByLabel("搜尋", { exact: true }).fill("");
+}
+
+/** The warehouse opens on 未討論; most steps work on 全部. */
+async function showFilter(page, label) {
+  const button = page.getByRole("group", { name: "狀態篩選" }).getByRole("button", { name: new RegExp(`^${label}`) });
+  await button.click();
+  await page.waitForFunction((l) => [...document.querySelectorAll('[aria-label="狀態篩選"] button')].some((b) => b.textContent.startsWith(l) && b.getAttribute("aria-pressed") === "true"), label);
+}
+
 (async () => {
   // A local server that must never be contacted by the app's server.
   let internalHits = 0;
@@ -101,10 +118,17 @@ async function cardCount(page) {
   let listingId = null;
   let manualId = null;
 
-  await check("1 開啟網址直接進入網站，不需登入", async () => {
+  await check("1 開啟網址直接進入網站，不需登入；預設篩選是「未討論」", async () => {
     await page.goto(BASE);
     await page.getByRole("heading", { name: "Potions 二店選址倉庫" }).waitFor();
     assert.strictEqual(await page.getByLabel("貼上網址", { exact: true }).isVisible(), true);
+    const filters = page.getByRole("group", { name: "狀態篩選" });
+    assert.strictEqual(await filters.getByRole("button", { name: /^未討論/ }).getAttribute("aria-pressed"), "true", "預設不是未討論");
+    const shown = await page.locator("[data-item-id]").count();
+    const undecided = Number((await filters.getByRole("button", { name: /^未討論/ }).innerText()).replace(/\D/g, ""));
+    assert.strictEqual(shown, undecided, "未討論篩選顯示的數量不對");
+    await showFilter(page, "全部");
+    return `未討論 ${undecided} 筆；可切換到全部`;
   });
 
   await check("2 貼上 591 連結建立收藏（第一次會詢問暱稱），收藏後留在倉庫", async () => {
@@ -322,6 +346,7 @@ async function cardCount(page) {
 
   await check("16 重新整理後資料仍在", async () => {
     await page.reload();
+    await showFilter(page, "全部");
     await page.locator(`[data-item-id="${listingId}"]`).waitFor();
   });
 
@@ -331,6 +356,7 @@ async function cardCount(page) {
     await mobile.addInitScript((n) => localStorage.setItem("potions-nickname", n), `手機${stamp}`);
     const m = await mobile.newPage();
     await m.goto(BASE);
+    await showFilter(m, "全部");
     await m.locator(`[data-item-id="${listingId}"]`).click();
     await m.getByRole("button", { name: "開啟原始網頁 ↗", exact: true }).waitFor();
     assert.strictEqual(await m.locator("iframe").count(), 0, "手機不該嵌入");
@@ -401,6 +427,7 @@ async function cardCount(page) {
     const size = await loadedImage(uploaded);
     // Survives a reload and shows on another device.
     await page.reload();
+    await showFilter(page, "全部");
     const reloaded = page.getByRole("region", { name: "物件瀏覽" });
     const reThumbs = reloaded.getByRole("list", { name: "照片縮圖" }).getByRole("listitem");
     if (await reThumbs.count()) await reThumbs.last().click();
@@ -474,7 +501,7 @@ async function cardCount(page) {
 
   await check("20 連結健康：被擋或讀不到是「無法確認」，下架才是「已失效」", async () => {
     await page.reload();
-    await page.getByRole("group", { name: "狀態篩選" }).getByRole("button", { name: /^全部/ }).click();
+    await showFilter(page, "全部");
     const internalCard = page.locator(`[data-source-url="http://127.0.0.1:4599/seq-${stamp}-1"]`).first();
     await internalCard.getByText("無法確認").waitFor();
     assert.strictEqual(await internalCard.getByText("已失效").count(), 0, "讀不到的內部位址被標成已失效");
@@ -510,6 +537,41 @@ async function cardCount(page) {
     return results.join("；");
   });
 
+  await check("23 聯絡資訊：可編輯、電話與 LINE 成為連結、可用聯絡人與電話搜尋（其他分類的結果會提示）", async () => {
+    const phone = "0912-345-678";
+    const contact = `測試不動產 王小姐${stamp}  ${phone}\n\nLINE ID：@t${stamp}`;
+    await showFilter(page, "全部");
+    await page.locator(`[data-item-id="${manualId}"]`).count().then((n) => n || showFilter(page, "不考慮"));
+    await page.locator(`[data-item-id="${manualId}"]`).first().click();
+    const region = page.getByRole("region", { name: "物件瀏覽" });
+    await region.getByRole("button", { name: "編輯", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "編輯物件" });
+    await dialog.getByLabel("聯絡資訊（房仲公司、聯絡人、電話、LINE ID 等）", { exact: true }).fill(contact);
+    await dialog.getByRole("button", { name: "儲存", exact: true }).click();
+    const box = region.getByRole("group", { name: "聯絡資訊" });
+    await box.getByText(`王小姐${stamp}`).waitFor();
+    assert.strictEqual(await box.locator('a[data-contact="tel"]').getAttribute("href"), "tel:0912345678");
+    assert.strictEqual(await box.locator('a[data-contact="line"]').getAttribute("href"), `https://line.me/R/ti/p/%40t${stamp}`);
+    await region.getByRole("button", { name: "關閉", exact: true }).click();
+    // The item is 不考慮 (step 12): searching from 未討論 points to the other filter.
+    await showFilter(page, "未討論");
+    const search = page.getByLabel("搜尋", { exact: true });
+    for (const q of [`王小姐${stamp}`, "0912345678", phone]) {
+      await search.fill(q);
+      const hint = page.getByLabel("其他分類的搜尋結果").getByRole("button", { name: /^不考慮/ });
+      await hint.waitFor();
+      await hint.click();
+      await page.locator(`[data-item-id="${manualId}"]`).waitFor();
+      await showFilter(page, "未討論");
+    }
+    await search.fill("");
+    // Survives a reload.
+    await page.goto(`${BASE}/?item=${manualId}`);
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("group", { name: "聯絡資訊" }).getByText(`王小姐${stamp}`).waitFor();
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "關閉", exact: true }).click();
+    return "編輯→顯示→tel／LINE 連結→以姓名、電話（有無橫線）搜尋→重新整理後仍在";
+  });
+
   if (REAL) {
     await check("22 591 App 分享連結（591.to）存成物件本身的網址並帶入照片，與網頁版連結去重", async () => {
       const share = "https://591.to/elOXb";
@@ -522,6 +584,18 @@ async function cardCount(page) {
       const card = page.locator(`[data-source-url="${listing}"]`).first();
       await card.click();
       const region = page.getByRole("region", { name: "物件瀏覽" });
+      // The real title (not 「591房屋交易網」) and the public contact details; an older copy is corrected by 重新取得.
+      const title = "#稀有釋出#可餐飲#可飲酒";
+      let fixed = "";
+      if ((await region.locator("h2").innerText()) !== title || (await region.getByRole("group", { name: "聯絡資訊" }).count()) === 0) {
+        await region.getByRole("button", { name: "重新取得照片與資訊", exact: true }).click();
+        await page.getByText("已重新取得照片與資訊").waitFor({ timeout: 30000 });
+        fixed = "（舊資料按「重新取得」後修正）";
+      }
+      assert.strictEqual(await region.locator("h2").innerText(), title);
+      const contactBox = region.getByRole("group", { name: "聯絡資訊" });
+      await contactBox.locator('a[data-contact="tel"]').first().waitFor();
+      await contactBox.locator('a[data-contact="line"]').first().waitFor();
       const size = await loadedImage(region.locator('img[data-photo-source="listing"]').first());
       const thumbs = await region.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").count();
       await region.getByRole("button", { name: "關閉", exact: true }).click();
@@ -529,7 +603,8 @@ async function cardCount(page) {
       await paste(page, listing);
       await page.getByText("這個物件已經在倉庫裡").waitFor();
       assert.strictEqual(await cardCount(page), before);
-      return `591.to → ${listing}，照片 ${thumbs} 張（第一張 ${size.w}x${size.h}），再貼網頁版判定為重複`;
+      await search591(page, title, listing);
+      return `591.to → ${listing}，標題「${title}」${fixed}、公開聯絡資訊有電話與 LINE 連結，照片 ${thumbs} 張（第一張 ${size.w}x${size.h}），再貼網頁版判定為重複，可用標題搜尋`;
     });
   }
 

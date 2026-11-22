@@ -3,10 +3,25 @@
 import { randomBytes } from "node:crypto";
 import { fetchPreview, type Preview } from "@/lib/preview";
 import { removePhotos } from "@/lib/photos";
+import { mapLimit } from "@/lib/concurrency";
 import { isDueForCheck } from "@/lib/health";
+import { findSameListing, itemFromPage } from "@/lib/merge";
+import { isGenericDescription, isGenericTitle } from "@/lib/meta";
+import { tidyContact } from "@/lib/contact";
 import { mutate, NO_WRITE, readDoc } from "@/lib/store";
-import { isStatus, type ActionResult, type AddOutcome, type Doc, type Item, type ItemFields, type LinkCheck, type Photo, type Status } from "@/lib/types";
-import { cleanUrl, hostOf, nameFromText } from "@/lib/url";
+import {
+  isStatus,
+  MANUAL_FIELDS,
+  type ActionResult,
+  type AddOutcome,
+  type Doc,
+  type Item,
+  type ItemFields,
+  type LinkCheck,
+  type Photo,
+  type Status,
+} from "@/lib/types";
+import { cleanUrl, nameFromText } from "@/lib/url";
 
 // No login: every visitor may read and write. Inputs are still validated and
 // trimmed so a bad request cannot corrupt the shared document.
@@ -35,8 +50,9 @@ function findItem(doc: Doc, id: unknown): Item {
   return item;
 }
 
+/** An item outside the recycle bin with the same link or the same 591 listing. */
 function sameUrl(doc: Doc, url: string): Item | undefined {
-  return doc.items.find((i) => !i.deletedAt && i.sourceUrl === url);
+  return findSameListing(doc.items, url, { includeDeleted: false });
 }
 
 async function run(work: () => Promise<ActionResult>): Promise<ActionResult> {
@@ -57,19 +73,6 @@ export async function loadDoc(): Promise<ActionResult> {
 const URLS_PER_CALL = 8;
 const FETCH_CONCURRENCY = 4;
 
-async function mapLimit<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await work(items[index]);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
 function linkCheck(preview: Preview, at: string): LinkCheck {
   return { health: preview.health, healthAt: at, healthReason: preview.healthReason };
 }
@@ -81,29 +84,7 @@ function listingPhotos(urls: string[]): Photo[] {
 }
 
 function newItem(url: string, name: string, preview: Preview, who: string, now: string): Item {
-  return {
-    id: newId(),
-    name: preview.title || name || `來自 ${hostOf(url)} 的物件`,
-    sourceUrl: url,
-    coverUrl: preview.image,
-    info: preview.description,
-    address: preview.address,
-    rent: preview.rent,
-    area: preview.area,
-    floor: preview.floor,
-    photos: listingPhotos(preview.photos),
-    embed: preview.embed,
-    ...linkCheck(preview, now),
-    status: "new",
-    note: "",
-    noteBy: "",
-    noteAt: null,
-    createdBy: who,
-    createdAt: now,
-    updatedAt: now,
-    deletedAt: null,
-    deletedBy: "",
-  };
+  return itemFromPage(newId(), url, name, preview, who, now, newId);
 }
 
 /**
@@ -168,6 +149,7 @@ function readFields(input: Partial<ItemFields>): ItemFields {
     rent: positiveNumber(input.rent, 100_000_000),
     area: positiveNumber(input.area, 100_000),
     floor: text(input.floor, 40),
+    contact: tidyContact(text(input.contact, 2000)),
     embed: typeof input.embed === "boolean" ? input.embed : sourceUrl.startsWith("https:"),
   };
 }
@@ -183,10 +165,12 @@ export async function addManual(input: Partial<ItemFields>, nickname: unknown): 
     if (!fields.name) return { ok: false, error: "請填寫名稱" };
     const now = new Date().toISOString();
     const id = newId();
+    const manual = MANUAL_FIELDS.filter((f) => fields[f] !== "" && fields[f] !== null);
     const { doc } = await mutate((d) => {
       d.items.push({
         id,
         ...fields,
+        manual,
         photos: [],
         ...UNCHECKED,
         status: "new",
@@ -213,7 +197,10 @@ export async function updateItem(id: unknown, input: Partial<ItemFields>): Promi
       const item = findItem(d, id);
       // A changed link has not been checked yet.
       const relink = item.sourceUrl !== fields.sourceUrl ? UNCHECKED : {};
-      Object.assign(item, fields, relink, { updatedAt: new Date().toISOString() });
+      // Fields changed by hand are never overwritten by a later page read.
+      const edited = MANUAL_FIELDS.filter((f) => item[f] !== fields[f]);
+      const manual = [...new Set([...item.manual, ...edited])];
+      Object.assign(item, fields, relink, { manual, updatedAt: new Date().toISOString() });
       return true;
     });
     return { ok: true, doc };
@@ -305,7 +292,10 @@ export async function setDeleted(id: unknown, deleted: unknown, nickname: unknow
 
 /**
  * Reads the original listing again. Listing photos are replaced by the fresh
- * list (uploads are kept); facts only fill fields that are still empty.
+ * list (uploads are kept); facts only fill fields that are still empty. A name
+ * or information that only names the site (「591房屋交易網」) is corrected; a
+ * name a shareholder typed is kept. When the page cannot be read, nothing but
+ * the link check changes.
  */
 export async function refetchItem(id: unknown): Promise<ActionResult> {
   return run(async () => {
@@ -329,8 +319,13 @@ export async function refetchItem(id: unknown): Promise<ActionResult> {
       if (listingUrl && listingUrl !== item.sourceUrl && !sameUrl(d, listingUrl)) item.sourceUrl = listingUrl;
       const uploads = item.photos.filter((p) => p.source === "upload");
       item.photos = [...(preview.photos.length ? listingPhotos(preview.photos) : item.photos.filter((p) => p.source === "listing")), ...uploads];
+      if (preview.title && preview.title !== item.name && (isGenericTitle(item.name) || !item.manual.includes("name"))) {
+        item.name = preview.title;
+      }
+      if (isGenericDescription(item.info)) item.info = "";
       if (!item.coverUrl && preview.image) item.coverUrl = preview.image;
       if (!item.info && preview.description) item.info = preview.description;
+      if (!item.contact && preview.contact) item.contact = preview.contact;
       if (!item.address && preview.address) item.address = preview.address;
       if (item.rent === null && preview.rent !== null) item.rent = preview.rent;
       if (item.area === null && preview.area !== null) item.area = preview.area;

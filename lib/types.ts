@@ -35,8 +35,16 @@ export type Item = {
   rent: number | null;
   area: number | null;
   floor: string;
+  /** Free text: agency, contact person, phone, LINE ID and other notes. */
+  contact: string;
   photos: Photo[];
   embed: boolean;
+  /**
+   * Fields a person set: in the edit dialog, when adding by hand, or from a
+   * shareholders' sheet import. Automatic page reads never overwrite these
+   * unless the value is unusable (for example a name that only says 「591」).
+   */
+  manual: ManualField[];
   status: Status;
   health: Health;
   healthAt: string | null;
@@ -77,8 +85,13 @@ export type ItemFields = {
   rent: number | null;
   area: number | null;
   floor: string;
+  contact: string;
   embed: boolean;
 };
+
+export type ManualField = Exclude<keyof ItemFields, "embed">;
+
+export const MANUAL_FIELDS: ManualField[] = ["name", "sourceUrl", "coverUrl", "info", "address", "rent", "area", "floor", "contact"];
 
 /** What happened to one link in a batch add. */
 export type AddOutcome = {
@@ -102,7 +115,9 @@ export function normalizeItem(raw: Item): Item {
     rent: typeof raw.rent === "number" ? raw.rent : null,
     area: typeof raw.area === "number" ? raw.area : null,
     floor: raw.floor ?? "",
+    contact: typeof raw.contact === "string" ? raw.contact : "",
     photos: Array.isArray(raw.photos) ? raw.photos : [],
+    manual: Array.isArray(raw.manual) ? raw.manual.filter((f) => (MANUAL_FIELDS as string[]).includes(f)) : [],
     health: raw.health ?? "unchecked",
     healthAt: raw.healthAt ?? null,
     healthReason: raw.healthReason ?? "",

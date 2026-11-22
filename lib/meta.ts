@@ -18,6 +18,26 @@ function clean(text: string, max: number): string {
   return decodeEntities(text).replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+// Titles and descriptions that name the site instead of the listing. 591
+// serves these when it does not render the listing (for example to some
+// servers), so they must never become an item's name or information.
+const GENERIC_TITLES = [
+  /^591(?:房屋交易網|租屋網|房屋交易|售屋網)?(?:\s*[|｜:：\-–—].*)?$/i,
+  /^來自\s*\S+\s*的物件$/,
+  /^(?:店面|店舖|辦公|住宅|廠房|土地)?(?:出租|出售|租屋|買屋|售屋)$/,
+];
+
+/** True for a missing name or one that only names the site (「591」, 「591房屋交易網 | …」). */
+export function isGenericTitle(title: string): boolean {
+  const t = title.trim();
+  return !t || GENERIC_TITLES.some((r) => r.test(t));
+}
+
+/** True for 591's site-wide description, which says nothing about the listing. */
+export function isGenericDescription(text: string): boolean {
+  return /591房屋交易網是|每日\d+萬人在線找屋/.test(text);
+}
+
 /** Removes the site-name suffix 591 appends to its titles. */
 export function cleanTitle(title: string): string {
   return title.replace(/\s*(?:[|｜]\s*[^|｜]{1,12}?\s*)?-\s*591(?:房屋交易網|租屋網)\s*$/, "").trim();
@@ -41,10 +61,12 @@ export function parseMeta(html: string, pageUrl: URL): PageMeta {
     if (key && content && !meta.has(key)) meta.set(key, content);
   }
   const titleTag = head.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "";
-  const title = cleanTitle(clean(meta.get("og:title") ?? meta.get("twitter:title") ?? titleTag, 200)).slice(0, 120);
-  const description = cleanDescription(
+  const rawTitle = cleanTitle(clean(meta.get("og:title") ?? meta.get("twitter:title") ?? titleTag, 200)).slice(0, 120);
+  const title = isGenericTitle(rawTitle) ? "" : rawTitle;
+  const rawDescription = cleanDescription(
     clean(meta.get("og:description") ?? meta.get("description") ?? meta.get("twitter:description") ?? "", 400),
   ).slice(0, 300);
+  const description = isGenericDescription(rawDescription) ? "" : rawDescription;
   let image = "";
   const rawImage = meta.get("og:image") ?? meta.get("og:image:url") ?? meta.get("twitter:image");
   if (rawImage) {

@@ -160,6 +160,7 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
     title: "",
     image: "",
     description: "",
+    contact: "",
     photos: [],
     rent: null,
     area: null,
@@ -191,7 +192,9 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
       if (res.status !== 200 || !res.body || !isHtml || verdict.health === "gone") return base;
       const meta = parseMeta(res.body, url);
       const details = parseListing(res.body, url, meta.description);
-      return { ...base, ...meta, ...details, fetched: Boolean(meta.title || meta.image || meta.description || details.photos.length) };
+      // The listing's structured title is preferred over og:title, which 591 sometimes sets to its own name.
+      const title = details.title || meta.title;
+      return { ...base, ...meta, ...details, title, fetched: Boolean(title || meta.image || meta.description || details.photos.length) };
     }
     return failed("redirects");
   } catch (error) {

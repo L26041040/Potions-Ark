@@ -93,6 +93,40 @@ function hash(text: string): string {
   return createHash("sha1").update(text).digest("hex");
 }
 
+/** What a backup holds, so a caller can compare it with the data before a change. */
+export type BackupInfo = { pathname: string; items: number; entries: number; created: boolean };
+
+/**
+ * Saves a copy of the shared document, byte for byte, before a bulk change
+ * such as a sheet import. Calling it again with the same name keeps the first
+ * copy, so a re-run never replaces the original backup with changed data.
+ */
+export async function backupDoc(name: string): Promise<BackupInfo> {
+  if (!/^[a-z0-9][a-z0-9-]{2,40}$/.test(name)) throw new Error("備份名稱不正確");
+  const pathname = `${STORAGE_ENV}/backups/${name}.json`;
+  const count = (text: string, created: boolean): BackupInfo => {
+    const doc = parse(text);
+    return { pathname, items: doc.items.length, entries: doc.entries.length, created };
+  };
+  if (usesBlob()) {
+    const existing = await get(pathname, { access: "private", useCache: false, headers: { "accept-encoding": "identity" } });
+    if (existing && existing.statusCode === 200) return count(await new Response(existing.stream).text(), false);
+    const current = await get(BLOB_PATH, { access: "private", useCache: false, headers: { "accept-encoding": "identity" } });
+    const text = current && current.statusCode === 200 ? await new Response(current.stream).text() : JSON.stringify(emptyDoc());
+    await put(pathname, text, { access: "private", contentType: "application/json", addRandomSuffix: false, allowOverwrite: false });
+    return count(text, true);
+  }
+  const file = path.join(process.cwd(), ".data", "backups", `${name}.json`);
+  try {
+    return count(await readFile(file, "utf8"), false);
+  } catch {
+    const text = await readFile(LOCAL_FILE, "utf8").catch(() => JSON.stringify(emptyDoc()));
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, text, { flag: "wx" });
+    return count(text, true);
+  }
+}
+
 export async function readDoc(): Promise<Doc> {
   return (await backend().read()).doc;
 }

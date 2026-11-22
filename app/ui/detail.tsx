@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { contactParts } from "@/lib/contact";
 import { STATUS_LABEL, type Doc, type Entry, type Item, type Status } from "@/lib/types";
 import { hostOf, mapsUrl } from "@/lib/url";
 import { formatTime, openSource, StatusButtons } from "./bits";
@@ -121,6 +122,32 @@ function EmbedView({ item }: { item: Item }) {
 
 const MONEY = new Intl.NumberFormat("zh-TW");
 
+/** 聯絡資訊 with phone numbers as call links and LINE IDs as LINE links. */
+function Contact({ text }: { text: string }) {
+  return (
+    <div role="group" aria-label="聯絡資訊" className="rounded-lg bg-amber-50/70 px-3 py-2 text-sm ring-1 ring-amber-200">
+      <p className="text-xs font-medium text-stone-500">聯絡資訊</p>
+      <p className="whitespace-pre-wrap break-words">
+        {contactParts(text).map((part, i) =>
+          part.kind === "text" ? (
+            <span key={i}>{part.text}</span>
+          ) : (
+            <a
+              key={i}
+              href={part.href}
+              data-contact={part.kind}
+              {...(part.kind === "line" ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+              className="font-medium text-sky-700 underline underline-offset-2"
+            >
+              {part.text}
+            </a>
+          ),
+        )}
+      </p>
+    </div>
+  );
+}
+
 function Facts({ item }: { item: Item }) {
   const rows: [string, string][] = [];
   if (item.rent !== null) rows.push(["月租金", `NT$ ${MONEY.format(item.rent)}`]);
@@ -140,7 +167,8 @@ function Facts({ item }: { item: Item }) {
         </dl>
       )}
       {item.info && <p className="whitespace-pre-wrap text-sm text-stone-600">{item.info}</p>}
-      {!rows.length && !item.info && <p className="text-sm text-stone-400">尚無租金、坪數等資訊，可按「編輯」補上。</p>}
+      {item.contact && <Contact text={item.contact} />}
+      {!rows.length && !item.info && !item.contact && <p className="text-sm text-stone-400">尚無租金、坪數等資訊，可按「編輯」補上。</p>}
     </section>
   );
 }

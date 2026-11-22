@@ -1,7 +1,14 @@
 // Pure extraction of a listing's photos and key facts from a 591 page.
 // Only 591 is read this way; other sites keep the single og:image cover.
 
+import { findLineIds, findPhones } from "./contact";
+import { cleanTitle, decodeEntities, isGenericTitle } from "./meta";
+
 export type ListingDetails = {
+  /** The listing's own title from its structured data (JSON-LD), without the site name. */
+  title: string;
+  /** Public contact details shown on the page: agent card and numbers written in the description. */
+  contact: string;
   photos: string[];
   rent: number | null;
   area: number | null;
@@ -54,10 +61,86 @@ export function isShopRental591(url: URL): boolean {
   return url.hostname === "business.591.com.tw" && /^\/rent\/\d+/.test(url.pathname);
 }
 
+/**
+ * One key per 591 listing, whatever form the link takes (web, mobile, with
+ * extra parameters), so the same listing is never saved twice. Null for other
+ * sites and for share links (591.to), which must be resolved first.
+ */
+export function listingKey(raw: string): string | null {
+  let url: URL;
+  try {
+    url = resolve591Share(new URL(raw));
+  } catch {
+    return null;
+  }
+  if (!is591(url)) return null;
+  const host = url.hostname.replace(/^www\./, "");
+  const path = url.pathname;
+  let m = path.match(/^\/(?:m\/)?rent\/(\d+)/);
+  if (host === "business.591.com.tw" && m) return `591:business:${m[1]}`;
+  m = path.match(/^\/v2\/business\/rent\/(\d+)/);
+  if (host === "m.591.com.tw" && m) return `591:business:${m[1]}`;
+  m = path.match(/^\/(?:rent-detail-)?(\d+)(?:\.html)?$/);
+  if (host === "rent.591.com.tw" && m) return `591:rent:${m[1]}`;
+  m = path.match(/^\/v2\/rent\/(\d+)/);
+  if (host === "m.591.com.tw" && m) return `591:rent:${m[1]}`;
+  return null;
+}
+
+function htmlText(fragment: string): string {
+  return decodeEntities(
+    fragment
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<br\s*\/?>|<\/(?:p|div|li|h\d)>/gi, "\n")
+      .replace(/<[^>]+>/g, ""),
+  );
+}
+
+/**
+ * Contact details a 591 page shows publicly: the role, name and company on
+ * the agent card, plus phone numbers and LINE IDs the poster wrote in the
+ * description. Numbers revealed only by the call button are not read.
+ */
+export function parseContact(html: string): string {
+  const lines: string[] = [];
+  const card = html.match(/<span[^>]*class="name"[^>]*>\s*<em[^>]*>\s*([^<:：]{1,6})[:：]?\s*<\/em>\s*([^<]{0,30})<\/span>/);
+  const company = htmlText(html.match(/class="econ-text"[^>]*>([^<]{1,60})</)?.[1] ?? "").trim();
+  if (card) {
+    const role = card[1].trim();
+    // The card shortens long names to 「京安國...」; those are left out.
+    const name = htmlText(card[2]).trim();
+    const who = [role, /(?:\.\.\.|…)$/.test(name) ? "" : name].filter(Boolean).join(" ");
+    lines.push([who, company].filter(Boolean).join("｜"));
+  } else if (company) {
+    lines.push(company);
+  }
+  const start = html.search(/class="article/);
+  if (start >= 0) {
+    const end = html.indexOf("<section", start);
+    const text = htmlText(html.slice(start, end > start ? end : start + 30_000));
+    const phones = findPhones(text).slice(0, 3);
+    const lineIds = findLineIds(text).slice(0, 2);
+    if (phones.length) lines.push("電話：" + phones.join("、"));
+    if (lineIds.length) lines.push("LINE：" + lineIds.join("、"));
+  }
+  return lines.filter(Boolean).join("\n").slice(0, 500);
+}
+
 export function parseListing(html: string, pageUrl: URL, description: string): ListingDetails {
-  const details: ListingDetails = { photos: [], rent: null, area: null, address: "", floor: "" };
+  const details: ListingDetails = { title: "", contact: "", photos: [], rent: null, area: null, address: "", floor: "" };
   if (!isShopRental591(pageUrl)) return details;
   const nodes = jsonLdNodes(html);
+
+  // Place.name is the listing title as posted; RealEstateListing.name carries the site suffix.
+  for (const type of ["Place", "RealEstateListing"]) {
+    const node = nodes.find((n) => typesOf(n).includes(type) && str(n.name));
+    const title = node ? cleanTitle(decodeEntities(str(node.name)).replace(/\s+/g, " ")).slice(0, 120) : "";
+    if (title && !isGenericTitle(title)) {
+      details.title = title;
+      break;
+    }
+  }
+  details.contact = parseContact(html);
 
   const seen = new Set<string>();
   for (const node of nodes) {

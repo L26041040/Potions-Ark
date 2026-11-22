@@ -86,6 +86,7 @@ export function ItemDialog({
     rent: item?.rent ?? null,
     area: item?.area ?? null,
     floor: item?.floor ?? "",
+    contact: item?.contact ?? "",
     embed: item?.embed ?? true,
   });
   const [rentText, setRentText] = useState(item?.rent != null ? String(item.rent) : "");
@@ -118,6 +119,16 @@ export function ItemDialog({
         </Field>
         <Field label="地址（填了才會出現 Google Maps 連結）">
           <input value={fields.address} onChange={(e) => set("address", e.target.value)} maxLength={200} className={input} />
+        </Field>
+        <Field label="聯絡資訊（房仲公司、聯絡人、電話、LINE ID 等）">
+          <textarea
+            value={fields.contact}
+            onChange={(e) => set("contact", e.target.value)}
+            maxLength={1000}
+            rows={3}
+            placeholder={"例如：○○不動產 王小姐 0912-345-678\nLINE：@abc1234"}
+            className={input}
+          />
         </Field>
         <Field label="原始網址">
           <input value={fields.sourceUrl} onChange={(e) => set("sourceUrl", e.target.value)} inputMode="url" placeholder="https://" className={input} />
