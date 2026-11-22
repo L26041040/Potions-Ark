@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { BlobError, BlobPreconditionFailedError, get, put } from "@vercel/blob";
-import { emptyDoc, type Doc } from "./types";
+import { emptyDoc, normalizeItem, type Doc } from "./types";
 
 // The whole shared dataset is one JSON document. Writes are conditional on the
 // version that was read, so two people saving at once never overwrite each other.
@@ -15,7 +15,9 @@ interface Backend {
   write(doc: Doc, etag: string | null): Promise<boolean>;
 }
 
-const BLOB_PATH = `${process.env.VERCEL_ENV === "production" ? "prod" : "dev"}/potions-ark-db.json`;
+/** Production and every other environment keep separate data. */
+export const STORAGE_ENV = process.env.VERCEL_ENV === "production" ? "prod" : "dev";
+const BLOB_PATH = `${STORAGE_ENV}/potions-ark-db.json`;
 
 // A compressed response can carry a weakened ETag (W/"...") that never matches
 // the stored version, so the document is read uncompressed and the ETag is
@@ -71,15 +73,20 @@ const localBackend: Backend = {
   },
 };
 
-function backend(): Backend {
-  if (process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID) return blobBackend;
+/** True when the Vercel Blob store is configured; throws on Vercel when it is missing. */
+export function usesBlob(): boolean {
+  if (process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID) return true;
   if (process.env.VERCEL) throw new Error("雲端儲存尚未設定");
-  return localBackend;
+  return false;
+}
+
+function backend(): Backend {
+  return usesBlob() ? blobBackend : localBackend;
 }
 
 function parse(text: string): Doc {
   const data = JSON.parse(text) as Partial<Doc>;
-  return { version: 1, items: data.items ?? [], entries: data.entries ?? [] };
+  return { version: 1, items: (data.items ?? []).map(normalizeItem), entries: data.entries ?? [] };
 }
 
 function hash(text: string): string {

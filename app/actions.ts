@@ -2,8 +2,9 @@
 
 import { randomBytes } from "node:crypto";
 import { fetchPreview, type Preview } from "@/lib/preview";
+import { removePhotos } from "@/lib/photos";
 import { mutate, NO_WRITE, readDoc } from "@/lib/store";
-import { isStatus, type ActionResult, type AddOutcome, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
+import { isStatus, type ActionResult, type AddOutcome, type Doc, type Item, type ItemFields, type Photo, type Status } from "@/lib/types";
 import { cleanUrl, hostOf, nameFromText } from "@/lib/url";
 
 // No login: every visitor may read and write. Inputs are still validated and
@@ -68,6 +69,10 @@ async function mapLimit<T, R>(items: T[], limit: number, work: (item: T) => Prom
   return results;
 }
 
+function listingPhotos(urls: string[]): Photo[] {
+  return urls.map((url) => ({ id: newId(), source: "listing", url }));
+}
+
 function newItem(url: string, name: string, preview: Preview, who: string, now: string): Item {
   return {
     id: newId(),
@@ -75,7 +80,10 @@ function newItem(url: string, name: string, preview: Preview, who: string, now: 
     sourceUrl: url,
     coverUrl: preview.image,
     info: preview.description,
-    address: "",
+    address: preview.address,
+    rent: preview.rent,
+    area: preview.area,
+    photos: listingPhotos(preview.photos),
     embed: preview.embed,
     status: "new",
     note: "",
@@ -145,8 +153,15 @@ function readFields(input: Partial<ItemFields>): ItemFields {
     coverUrl: optionalUrl(input.coverUrl),
     info: text(input.info, 500),
     address: text(input.address, 200),
+    rent: positiveNumber(input.rent, 100_000_000),
+    area: positiveNumber(input.area, 100_000),
     embed: typeof input.embed === "boolean" ? input.embed : sourceUrl.startsWith("https:"),
   };
+}
+
+function positiveNumber(value: unknown, max: number): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value.replace(/,/g, "")) : NaN;
+  return Number.isFinite(n) && n > 0 && n <= max ? Math.round(n * 100) / 100 : null;
 }
 
 export async function addManual(input: Partial<ItemFields>, nickname: unknown): Promise<ActionResult> {
@@ -159,6 +174,7 @@ export async function addManual(input: Partial<ItemFields>, nickname: unknown): 
       d.items.push({
         id,
         ...fields,
+        photos: [],
         status: "new",
         note: "",
         noteBy: "",
@@ -266,6 +282,50 @@ export async function setDeleted(id: unknown, deleted: unknown, nickname: unknow
       }
       return true;
     });
+    return { ok: true, doc };
+  });
+}
+
+/**
+ * Reads the original listing again. Listing photos are replaced by the fresh
+ * list (uploads are kept); facts only fill fields that are still empty.
+ */
+export async function refetchItem(id: unknown): Promise<ActionResult> {
+  return run(async () => {
+    const current = findItem(await readDoc(), id);
+    if (!current.sourceUrl) return { ok: false, error: "這個物件沒有原始網址" };
+    const preview = await fetchPreview(current.sourceUrl);
+    if (!preview.fetched) return { ok: false, error: "讀不到原始網頁的資料（網站可能阻擋或已下架），原資料未變更" };
+    const { doc } = await mutate((d) => {
+      const item = findItem(d, id);
+      const uploads = item.photos.filter((p) => p.source === "upload");
+      item.photos = [...(preview.photos.length ? listingPhotos(preview.photos) : item.photos.filter((p) => p.source === "listing")), ...uploads];
+      if (!item.coverUrl && preview.image) item.coverUrl = preview.image;
+      if (!item.info && preview.description) item.info = preview.description;
+      if (!item.address && preview.address) item.address = preview.address;
+      if (item.rent === null && preview.rent !== null) item.rent = preview.rent;
+      if (item.area === null && preview.area !== null) item.area = preview.area;
+      item.embed = preview.embed;
+      item.updatedAt = new Date().toISOString();
+      return true;
+    });
+    return { ok: true, doc };
+  });
+}
+
+/** Deletes a photo a shareholder uploaded. Listing photos cannot be deleted. */
+export async function deleteUpload(itemId: unknown, photoId: unknown): Promise<ActionResult> {
+  return run(async () => {
+    let removed: Photo | undefined;
+    const { doc } = await mutate((d) => {
+      const item = findItem(d, itemId);
+      removed = item.photos.find((p) => p.id === photoId && p.source === "upload");
+      if (!removed) return NO_WRITE;
+      item.photos = item.photos.filter((p) => p !== removed);
+      item.updatedAt = new Date().toISOString();
+      return true;
+    });
+    if (removed?.pathname) await removePhotos([removed.pathname]).catch((e) => console.error("photo delete failed", e));
     return { ok: true, doc };
   });
 }

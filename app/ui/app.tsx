@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { addComment, addManual, addUrls, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
+import { addComment, addManual, addUrls, deleteUpload, refetchItem, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
 import { STATUS_LABEL, STATUSES, type ActionResult, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
 import { cleanUrl, extractAllUrls, extractUrl, nameFromText } from "@/lib/url";
 import { Cover, readNick, StatusBadge, storeNickname, useIsDesktop, useNickname } from "./bits";
@@ -258,6 +258,16 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
         onRestore: () => openItem && run((nick) => setDeleted(openItem.id, false, nick)),
         onSaveNote: async (note) => Boolean(openItem && (await run((nick) => saveNote(openItem.id, note, nick)))?.ok),
         onComment: async (body) => Boolean(openItem && (await run((nick) => addComment(openItem.id, body, nick)))?.ok),
+        onRefetch: async () => {
+          if (!openItem) return;
+          const res = await run(() => refetchItem(openItem.id));
+          if (res?.ok) setToast({ text: "已重新取得照片與資訊" });
+        },
+        onDeleteUpload: (photoId) => openItem && run(() => deleteUpload(openItem.id, photoId)),
+        onDoc: setDoc,
+        onError: (message) => setToast({ text: message, error: true }),
+        nickname,
+        requireNick,
       }
     : null;
 

@@ -10,6 +10,10 @@ const http = require("http");
 const assert = require("assert");
 
 const BASE = (process.argv[2] || "http://localhost:3000").replace(/\/$/, "");
+// REAL_591=1 when the server can read 591 (on Vercel): real photos are then required.
+const REAL = process.env.REAL_591 === "1";
+// Thirty uploads to one item cost Blob operations, so the cap test runs only where asked.
+const CAP_TEST = process.env.CAP_TEST === "1";
 const LISTING = process.argv[3] || "https://business.591.com.tw/rent/22197387";
 const stamp = Date.now().toString(36);
 const results = [];
@@ -38,7 +42,11 @@ async function stubExternal(context) {
   await context.route("**/*", (route) => {
     const url = new URL(route.request().url());
     if (url.host === base.host) return route.continue();
-    if (route.request().resourceType() === "image") return route.fulfill({ status: 404, body: "" });
+    if (route.request().resourceType() === "image") {
+      // Real 591 listing photos are loaded so the photo preview is checked with real images.
+      if (/^img\d*\.591\.com\.tw$/.test(url.host)) return route.continue();
+      return route.fulfill({ status: 404, body: "" });
+    }
     return route.fulfill({ status: 200, contentType: "text/html", body: "<html><body><h1>stub page</h1></body></html>" });
   });
 }
@@ -59,6 +67,15 @@ async function assertStayedInWarehouse(page) {
   assert.strictEqual(new URL(page.url()).searchParams.get("item"), null, "網址帶了 ?item=");
   assert.strictEqual(await page.getByLabel("貼上網址", { exact: true }).inputValue(), "", "輸入框沒有清空");
   assert.strictEqual(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "貼上網址", "焦點不在輸入框");
+}
+
+/** Waits until a real image has loaded with actual pixels, not just a URL in the page. */
+async function loadedImage(locator) {
+  await locator.waitFor();
+  await locator.evaluate((img) => (img.complete ? null : new Promise((r) => img.addEventListener("load", r, { once: true }) || img.addEventListener("error", r, { once: true }))));
+  const size = await locator.evaluate((img) => ({ w: img.naturalWidth, h: img.naturalHeight, src: img.currentSrc }));
+  assert.ok(size.w > 0 && size.h > 0, `圖片沒有載入：${size.src}`);
+  return size;
 }
 
 async function cardCount(page) {
@@ -116,18 +133,42 @@ async function cardCount(page) {
     return `名稱：${longest.slice(0, 30)}${existed ? "（先前已收藏）" : ""}`;
   });
 
-  await check("3 點卡片才開啟詳細面板，右側顯示原始網頁與開啟按鈕", async () => {
+  await check("3 點卡片才開啟；右側是本站原生預覽（照片、資訊），iframe 預設關閉可選配", async () => {
     await page.locator(`[data-item-id="${listingId}"]`).first().click();
     const region = page.getByRole("region", { name: "物件瀏覽" });
     await region.waitFor();
-    const frame = region.locator("iframe");
-    let detail = "伺服器判定不能嵌入，顯示開啟按鈕";
-    if ((await frame.count()) > 0) {
-      const src = await frame.getAttribute("src");
-      assert.ok(src && src.includes("591.com.tw") && !src.includes("utm_source"), `iframe src = ${src}`);
-      detail = `iframe src = ${src}`;
+    assert.strictEqual(await region.locator("iframe").count(), 0, "預設就嵌入了 iframe");
+    let detail;
+    if (REAL) {
+      const main = region.locator('img[data-photo-source="listing"]').first();
+      const size = await loadedImage(main);
+      const thumbs = await region.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").count();
+      assert.ok(thumbs >= 2, `只有 ${thumbs} 張照片`);
+      const second = region.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").nth(1);
+      await second.click();
+      const size2 = await loadedImage(region.locator('img[data-photo-source="listing"]').first());
+      await region.getByText("月租金").waitFor();
+      await region.getByText("坪數").first().waitFor();
+      await region.getByText("地址", { exact: true }).waitFor();
+      await region.getByRole("button", { name: "放大檢視", exact: true }).click();
+      const box = page.getByRole("dialog", { name: "放大檢視照片" });
+      await loadedImage(box.locator("img"));
+      await page.keyboard.press("Escape");
+      await box.waitFor({ state: "detached" });
+      assert.ok(await region.isVisible(), "按 Esc 連面板一起關掉了");
+      detail = `591 照片 ${thumbs} 張，第一張 ${size.w}x${size.h}、第二張 ${size2.w}x${size2.h} 已在瀏覽器載入`;
     } else {
-      await region.getByRole("button", { name: "開啟原始網頁 ↗", exact: true }).first().waitFor();
+      await region.getByRole("button", { name: "上傳照片或截圖", exact: true }).first().waitFor();
+      detail = "本機讀不到 591，只確認預覽區與上傳按鈕";
+    }
+    const embed = region.getByRole("button", { name: "嵌入原始網頁", exact: true });
+    if (await embed.count()) {
+      await embed.click();
+      const src = await region.locator("iframe").getAttribute("src");
+      assert.ok(src.includes("591.com.tw") && !src.includes("utm_source"), src);
+      await region.getByRole("button", { name: "看本站預覽", exact: true }).click();
+      assert.strictEqual(await region.locator("iframe").count(), 0);
+      detail += "；iframe 可選配開啟";
     }
     await region.getByRole("button", { name: "關閉", exact: true }).click();
     await region.waitFor({ state: "detached" });
@@ -324,6 +365,82 @@ async function cardCount(page) {
     assert.strictEqual(internalHits, 0, `內部伺服器被讀了 ${internalHits} 次`);
     await box.getByRole("button", { name: "關閉", exact: true }).click();
     return `第一次 ${JSON.stringify(first)}；重貼 ${JSON.stringify(again)}`;
+  });
+
+  await check("19 上傳照片：永久保存、換裝置可見、可刪除；伺服器端限制生效", async () => {
+    const png = await page.screenshot({ clip: { x: 0, y: 0, width: 320, height: 200 } });
+    await page.getByRole("group", { name: "狀態篩選" }).getByRole("button", { name: /^全部/ }).click();
+    await page.locator(`[data-item-id="${listingId}"]`).first().click();
+    const region = page.getByRole("region", { name: "物件瀏覽" });
+    const before = await region.locator("[aria-label='照片位置']").innerText().catch(() => "0 / 0");
+    await region.getByLabel("選擇照片", { exact: true }).setInputFiles({ name: "現場照.png", mimeType: "image/png", buffer: png });
+    const uploaded = region.locator('img[data-photo-source="upload"]');
+    const size = await loadedImage(uploaded);
+    // Survives a reload and shows on another device.
+    await page.reload();
+    await loadedImage(page.getByRole("region", { name: "物件瀏覽" }).locator('img[data-photo-source="upload"]'));
+    const other = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await stubExternal(other);
+    const p2 = await other.newPage();
+    await p2.goto(`${BASE}/?item=${listingId}`);
+    const r2 = p2.getByRole("region", { name: "物件瀏覽" });
+    const count2 = await r2.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").count().catch(() => 0);
+    if (count2 > 0) await r2.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").last().click();
+    await loadedImage(r2.locator('img[data-photo-source="upload"]'));
+    await other.close();
+
+    let refetch = "";
+    if (REAL) {
+      await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "重新取得照片與資訊", exact: true }).click();
+      await page.getByText("已重新取得照片與資訊").waitFor({ timeout: 30000 });
+      const r = page.getByRole("region", { name: "物件瀏覽" });
+      const total = await r.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").count();
+      await r.getByRole("list", { name: "照片縮圖" }).getByRole("listitem").last().click();
+      await loadedImage(r.locator('img[data-photo-source="upload"]'));
+      refetch = `；重新取得後共 ${total} 張，上傳的照片仍在`;
+    }
+
+    // Server-side limits, called the way any visitor could.
+    const post = (id, body, type = "image/jpeg") =>
+      page.evaluate(async ({ id, body, type }) => {
+        const res = await fetch(`/api/items/${id}/photos`, { method: "POST", body: new Uint8Array(body), headers: { "content-type": type } });
+        return res.status;
+      }, { id, body, type });
+    const jpegHead = [0xff, 0xd8, 0xff, 0xe0, ...new Array(60).fill(1)];
+    const big = await page.evaluate(async (id) => {
+      const res = await fetch(`/api/items/${id}/photos`, { method: "POST", body: new Uint8Array(5 * 1024 * 1024).fill(0xff), headers: { "content-type": "image/jpeg" } });
+      return res.status;
+    }, listingId);
+    assert.strictEqual(big, 413, "超過 4 MB 沒被拒");
+    assert.strictEqual(await post(listingId, [...new TextEncoder().encode("<html>這不是圖片</html>"), ...new Array(20).fill(32)], "image/jpeg"), 415, "偽裝成 JPEG 的文字沒被拒");
+    assert.strictEqual(await post("no-such-item", jpegHead), 404, "不存在的物件沒被拒");
+    const seqCard = page.locator("[data-item-id]").filter({ hasText: "來自 127.0.0.1" }).first();
+    const trashId = await seqCard.getAttribute("data-item-id");
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "關閉", exact: true }).click();
+    await seqCard.click();
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "刪除", exact: true }).click();
+    await page.getByText("這個物件在回收桶裡").waitFor();
+    assert.strictEqual(await post(trashId, jpegHead), 404, "回收桶中的物件沒被拒");
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "還原", exact: true }).first().click();
+    let cap = "（每物件上限未測）";
+    if (CAP_TEST) {
+      const statuses = [];
+      for (let i = 0; i < 31; i++) statuses.push(await post(trashId, jpegHead));
+      assert.ok(statuses.slice(0, 30).every((s) => s === 200), `前 30 張：${statuses.slice(0, 30).join(",")}`);
+      assert.strictEqual(statuses[30], 409, "第 31 張沒被拒");
+      cap = "；第 31 張被拒";
+    }
+
+    // Delete the uploaded photo on the listing.
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "關閉", exact: true }).click();
+    await page.locator(`[data-item-id="${listingId}"]`).first().click();
+    const r = page.getByRole("region", { name: "物件瀏覽" });
+    const items = r.getByRole("list", { name: "照片縮圖" }).getByRole("listitem");
+    if (await items.count()) await items.last().click();
+    await r.getByRole("button", { name: "刪除這張照片", exact: true }).click();
+    await r.locator('img[data-photo-source="upload"]').waitFor({ state: "detached" });
+    await r.getByRole("button", { name: "關閉", exact: true }).click();
+    return `上傳後 ${size.w}x${size.h} 已載入（原本 ${before}）；超過 4 MB、偽裝檔、不存在與回收桶物件都被拒${cap}${refetch}`;
   });
 
   await browser.close();

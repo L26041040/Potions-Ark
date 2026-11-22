@@ -9,6 +9,16 @@ export const STATUS_LABEL: Record<Status, string> = {
   shortlisted: "確定考慮",
 };
 
+export type Photo = {
+  id: string;
+  /** "listing": shown straight from the listing site. "upload": stored in our Blob store. */
+  source: "listing" | "upload";
+  url: string;
+  pathname?: string;
+  createdBy?: string;
+  createdAt?: string;
+};
+
 export type Item = {
   id: string;
   name: string;
@@ -16,6 +26,9 @@ export type Item = {
   coverUrl: string;
   info: string;
   address: string;
+  rent: number | null;
+  area: number | null;
+  photos: Photo[];
   embed: boolean;
   status: Status;
   note: string;
@@ -51,6 +64,8 @@ export type ItemFields = {
   coverUrl: string;
   info: string;
   address: string;
+  rent: number | null;
+  area: number | null;
   embed: boolean;
 };
 
@@ -67,6 +82,17 @@ export type AddOutcome = {
 export type ActionResult =
   | { ok: true; doc: Doc; id?: string; outcomes?: AddOutcome[] }
   | { ok: false; error: string; doc?: Doc };
+
+/** Fills fields added after an item was saved, so older data keeps working. */
+export function normalizeItem(raw: Item): Item {
+  return {
+    ...raw,
+    address: raw.address ?? "",
+    rent: typeof raw.rent === "number" ? raw.rent : null,
+    area: typeof raw.area === "number" ? raw.area : null,
+    photos: Array.isArray(raw.photos) ? raw.photos : [],
+  };
+}
 
 export function emptyDoc(): Doc {
   return { version: 1, items: [], entries: [] };

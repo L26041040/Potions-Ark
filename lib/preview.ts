@@ -3,6 +3,7 @@ import http, { type IncomingMessage } from "node:http";
 import https from "node:https";
 import net from "node:net";
 import zlib from "node:zlib";
+import { parseListing, type ListingDetails } from "./listing";
 import { parseMeta, type PageMeta } from "./meta";
 
 // Reads one listing page to get its title, cover and description, and to see
@@ -13,7 +14,7 @@ const TIMEOUT_MS = 6000;
 const MAX_BYTES = 1024 * 1024;
 const MAX_REDIRECTS = 3;
 
-export type Preview = PageMeta & { fetched: boolean; embed: boolean };
+export type Preview = PageMeta & ListingDetails & { fetched: boolean; embed: boolean };
 
 const blocked = new net.BlockList();
 for (const [addr, prefix] of [
@@ -136,7 +137,17 @@ export function allowsEmbedding(headers: IncomingMessage["headers"]): boolean {
 
 export async function fetchPreview(rawUrl: string): Promise<Preview> {
   let url = new URL(rawUrl);
-  const fallback: Preview = { fetched: false, embed: url.protocol === "https:", title: "", image: "", description: "" };
+  const fallback: Preview = {
+    fetched: false,
+    embed: url.protocol === "https:",
+    title: "",
+    image: "",
+    description: "",
+    photos: [],
+    rent: null,
+    area: null,
+    address: "",
+  };
   const signal = AbortSignal.timeout(TIMEOUT_MS);
   try {
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -150,7 +161,8 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
       const embed = url.protocol === "https:" && allowsEmbedding(res.headers);
       if (res.status !== 200 || !res.body) return { ...fallback, embed };
       const meta = parseMeta(res.body, url);
-      return { ...meta, fetched: Boolean(meta.title || meta.image || meta.description), embed };
+      const details = parseListing(res.body, url, meta.description);
+      return { ...meta, ...details, fetched: Boolean(meta.title || meta.image || meta.description || details.photos.length), embed };
     }
     return fallback;
   } catch {

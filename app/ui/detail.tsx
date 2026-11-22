@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { STATUS_LABEL, type Entry, type Item, type Status } from "@/lib/types";
+import { STATUS_LABEL, type Doc, type Entry, type Item, type Status } from "@/lib/types";
 import { hostOf, mapsUrl } from "@/lib/url";
-import { Cover, formatTime, openSource, StatusButtons } from "./bits";
+import { formatTime, openSource, StatusButtons } from "./bits";
+import { PhotoViewer } from "./photos";
 
 export type DetailProps = {
   item: Item | null;
@@ -18,6 +19,12 @@ export type DetailProps = {
   onRestore: () => void;
   onSaveNote: (note: string) => Promise<boolean>;
   onComment: (body: string) => Promise<boolean>;
+  onRefetch: () => Promise<void>;
+  onDeleteUpload: (photoId: string) => void;
+  onDoc: (doc: Doc) => void;
+  onError: (message: string) => void;
+  nickname: string;
+  requireNick: () => Promise<string | null>;
 };
 
 const button = "rounded-lg px-2.5 py-1.5 text-sm ring-1 ring-stone-300 bg-white hover:bg-stone-50 whitespace-nowrap";
@@ -35,9 +42,28 @@ function NavButtons({ prevId, nextId, onNavigate }: Pick<DetailProps, "prevId" |
   );
 }
 
-function Actions({ item, onEdit, onDelete, onRestore }: { item: Item } & Pick<DetailProps, "onEdit" | "onDelete" | "onRestore">) {
+function RefetchButton({ onRefetch }: Pick<DetailProps, "onRefetch">) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      className={`${button} disabled:opacity-50`}
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        await onRefetch();
+        setBusy(false);
+      }}
+    >
+      {busy ? "讀取中…" : "重新取得照片與資訊"}
+    </button>
+  );
+}
+
+function Actions({ item, onEdit, onDelete, onRestore, onRefetch }: { item: Item } & Pick<DetailProps, "onEdit" | "onDelete" | "onRestore" | "onRefetch">) {
   return (
     <>
+      {item.sourceUrl && <RefetchButton onRefetch={onRefetch} />}
       {item.address && (
         <a className={button} href={mapsUrl(item.address)} target="_blank" rel="noopener noreferrer">
           Google Maps
@@ -79,39 +105,64 @@ function OpenSourceButton({ url, big = false }: { url: string; big?: boolean }) 
   );
 }
 
-function SourceView({ item }: { item: Item }) {
-  if (item.sourceUrl && item.embed) {
-    return (
-      <div className="flex h-full flex-col">
-        <p className="shrink-0 border-b bg-stone-50 px-3 py-1 text-xs text-stone-500">
-          原始網頁：{hostOf(item.sourceUrl)}。畫面空白或被拒絕時，按上方「開啟原始網頁」，或在「編輯」取消嵌入。
-        </p>
-        <iframe
-          key={item.id + item.sourceUrl}
-          src={item.sourceUrl}
-          title="原始網頁"
-          className="min-h-0 w-full flex-1 border-0 bg-white"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-          referrerPolicy="no-referrer"
-        />
-      </div>
-    );
-  }
+/** Optional: the original page inside this site. Many sites refuse this, so it is off by default. */
+function EmbedView({ item }: { item: Item }) {
   return (
-    <div className="flex h-full items-center justify-center overflow-y-auto p-6">
-      <div className="w-full max-w-md space-y-3 text-center">
-        <Cover item={item} className="mx-auto aspect-[4/3] w-full rounded-xl" />
-        <h3 className="text-lg font-semibold">{item.name}</h3>
-        {item.info && <p className="whitespace-pre-wrap text-sm text-stone-600">{item.info}</p>}
-        {item.sourceUrl ? (
-          <>
-            <p className="text-sm text-stone-500">這個網站（{hostOf(item.sourceUrl)}）不允許嵌入，請另開視窗查看。另開的視窗會重複使用，可以擺在旁邊並排看。</p>
-            <OpenSourceButton url={item.sourceUrl} big />
-          </>
-        ) : (
-          <p className="text-sm text-stone-500">這個物件沒有原始網址，可以按「編輯」補上。</p>
-        )}
-      </div>
+    <div className="flex h-full flex-col">
+      <p className="shrink-0 border-b bg-stone-50 px-3 py-1 text-xs text-stone-500">
+        嵌入的原始網頁：{hostOf(item.sourceUrl)}。畫面空白或被拒絕時，請改按「開啟原始網頁」。
+      </p>
+      <iframe
+        key={item.id + item.sourceUrl}
+        src={item.sourceUrl}
+        title="原始網頁"
+        className="min-h-0 w-full flex-1 border-0 bg-white"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
+      />
+    </div>
+  );
+}
+
+const MONEY = new Intl.NumberFormat("zh-TW");
+
+function Facts({ item }: { item: Item }) {
+  const rows: [string, string][] = [];
+  if (item.rent !== null) rows.push(["月租金", `NT$ ${MONEY.format(item.rent)}`]);
+  if (item.area !== null) rows.push(["坪數", `${item.area} 坪`]);
+  if (item.address) rows.push(["地址", item.address]);
+  return (
+    <section aria-label="物件資訊" className="space-y-2">
+      {rows.length > 0 && (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+          {rows.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-stone-500">{k}</dt>
+              <dd className="font-medium">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {item.info && <p className="whitespace-pre-wrap text-sm text-stone-600">{item.info}</p>}
+      {!rows.length && !item.info && <p className="text-sm text-stone-400">尚無租金、坪數等資訊，可按「編輯」補上。</p>}
+    </section>
+  );
+}
+
+function Preview(props: DetailProps & { item: Item }) {
+  const { item } = props;
+  return (
+    <div className="space-y-4">
+      <PhotoViewer
+        key={item.id}
+        item={item}
+        nickname={props.nickname}
+        requireNick={props.requireNick}
+        onDoc={props.onDoc}
+        onDeleteUpload={props.onDeleteUpload}
+        onError={props.onError}
+      />
+      <Facts item={item} />
     </div>
   );
 }
@@ -225,7 +276,9 @@ function NotFound({ onClose }: { onClose: () => void }) {
 export function DesktopDetail(props: DetailProps) {
   const { item, entries, onClose, onStatus } = props;
   const [showDiscussion, setShowDiscussion] = useState(true);
+  const [embedFor, setEmbedFor] = useState<string | null>(null);
   if (!item) return <NotFound onClose={onClose} />;
+  const showEmbed = embedFor === item.id && Boolean(item.sourceUrl);
   const comments = entries.filter((e) => e.itemId === item.id && e.kind === "comment").length;
   return (
     <div className="flex h-full flex-col bg-white">
@@ -242,6 +295,11 @@ export function DesktopDetail(props: DetailProps) {
           <span className="mx-0.5 hidden h-5 w-px bg-stone-200 xl:block" />
           {item.sourceUrl && <OpenSourceButton url={item.sourceUrl} />}
           <Actions {...props} item={item} />
+          {item.sourceUrl && item.embed && (
+            <button type="button" className={button} aria-pressed={showEmbed} onClick={() => setEmbedFor(showEmbed ? null : item.id)}>
+              {showEmbed ? "看本站預覽" : "嵌入原始網頁"}
+            </button>
+          )}
           <button type="button" className={`${button} ml-auto`} onClick={() => setShowDiscussion((v) => !v)} aria-expanded={showDiscussion}>
             {showDiscussion ? "收合討論" : `展開討論（${comments}）`}
           </button>
@@ -249,8 +307,14 @@ export function DesktopDetail(props: DetailProps) {
       </div>
       <DeletedBanner item={item} onRestore={props.onRestore} />
       <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
-        <div className="min-h-0 min-w-0 flex-1 bg-stone-100">
-          <SourceView item={item} />
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-white">
+          {showEmbed ? (
+            <EmbedView item={item} />
+          ) : (
+            <div className="mx-auto max-w-3xl p-4">
+              <Preview {...props} item={item} />
+            </div>
+          )}
         </div>
         {showDiscussion && (
           <aside className="h-[42%] shrink-0 overflow-y-auto border-t p-3 xl:h-auto xl:w-[360px] xl:border-l xl:border-t-0 2xl:w-[400px]" aria-label="討論區">
@@ -277,12 +341,10 @@ export function MobileDetail(props: DetailProps) {
         <NotFound onClose={onClose} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <Cover item={item} className="aspect-[4/3] w-full" />
           <DeletedBanner item={item} onRestore={props.onRestore} />
           <div className="space-y-3 p-4">
             <h2 className="text-lg font-semibold leading-snug">{item.name}</h2>
-            {item.info && <p className="whitespace-pre-wrap text-sm text-stone-600">{item.info}</p>}
-            {item.address && <p className="text-sm text-stone-600">地址：{item.address}</p>}
+            <Preview {...props} item={item} />
             <StatusButtons status={item.status} onChange={onStatus} />
             {item.sourceUrl && <OpenSourceButton url={item.sourceUrl} big />}
             <div className="flex flex-wrap gap-2">

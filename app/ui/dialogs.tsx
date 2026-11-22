@@ -83,12 +83,17 @@ export function ItemDialog({
     coverUrl: item?.coverUrl ?? "",
     info: item?.info ?? "",
     address: item?.address ?? "",
+    rent: item?.rent ?? null,
+    area: item?.area ?? null,
     embed: item?.embed ?? true,
   });
+  const [rentText, setRentText] = useState(item?.rent != null ? String(item.rent) : "");
+  const [areaText, setAreaText] = useState(item?.area != null ? String(item.area) : "");
   const set = <K extends keyof ItemFields>(key: K, value: ItemFields[K]) => setFields((f) => ({ ...f, [key]: value }));
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (fields.name.trim()) onSubmit(fields);
+    const toNumber = (t: string) => (t.trim() ? Number(t.replace(/,/g, "")) : null);
+    if (fields.name.trim()) onSubmit({ ...fields, rent: toNumber(rentText), area: toNumber(areaText) });
   };
   return (
     <Modal title={mode === "add" ? "手動新增物件" : "編輯物件"} onClose={onCancel}>
@@ -99,6 +104,14 @@ export function ItemDialog({
         <Field label="簡單資訊（租金、坪數、樓層等）">
           <textarea value={fields.info} onChange={(e) => set("info", e.target.value)} maxLength={500} rows={3} className={input} />
         </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="月租金（元）">
+            <input value={rentText} onChange={(e) => setRentText(e.target.value)} inputMode="numeric" placeholder="例如 45000" className={input} />
+          </Field>
+          <Field label="坪數">
+            <input value={areaText} onChange={(e) => setAreaText(e.target.value)} inputMode="decimal" placeholder="例如 24.5" className={input} />
+          </Field>
+        </div>
         <Field label="地址（填了才會出現 Google Maps 連結）">
           <input value={fields.address} onChange={(e) => set("address", e.target.value)} maxLength={200} className={input} />
         </Field>
@@ -112,7 +125,7 @@ export function ItemDialog({
             </Field>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={fields.embed} onChange={(e) => set("embed", e.target.checked)} className="h-4 w-4" />
-              在右側嵌入原始網頁（畫面空白或被拒絕時請取消勾選）
+              允許在本站嵌入原始網頁（選配；畫面空白或被拒絕時請取消勾選）
             </label>
           </>
         )}

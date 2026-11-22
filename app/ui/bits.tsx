@@ -61,8 +61,9 @@ function CoverImage({ src, name, className }: { src: string; name: string; class
 }
 
 export function Cover({ item, className = "" }: { item: Item; className?: string }) {
-  if (!item.coverUrl) return <NameBlock name={item.name} className={className} />;
-  return <CoverImage key={item.coverUrl} src={item.coverUrl} name={item.name} className={className} />;
+  const src = item.coverUrl || item.photos[0]?.url;
+  if (!src) return <NameBlock name={item.name} className={className} />;
+  return <CoverImage key={src} src={src} name={item.name} className={className} />;
 }
 
 const TIME = new Intl.DateTimeFormat("zh-TW", {
