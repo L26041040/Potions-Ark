@@ -28,7 +28,8 @@ async function check(name, fn) {
     const detail = await fn();
     step(name, true, detail || "");
   } catch (e) {
-    step(name, false, e.message.split("\n")[0]);
+    const where = (e.stack || "").split("\n").find((l) => l.includes("smoke.cjs")) || "";
+    step(name, false, `${e.message.split("\n")[0]} ${where.trim()}`);
   }
 }
 
@@ -334,7 +335,13 @@ async function cardCount(page) {
     await m.locator(`[data-item-id="${listingId}"]`).click();
     await m.getByRole("button", { name: "開啟原始網頁 ↗", exact: true }).waitFor();
     assert.strictEqual(await m.locator("iframe").count(), 0, "手機不該嵌入");
-    await m.getByRole("button", { name: "確定考慮", exact: true }).click();
+    // Data from earlier runs may already have this status; make sure it really changes.
+    const target = m.getByRole("button", { name: "確定考慮", exact: true });
+    if ((await target.getAttribute("aria-pressed")) === "true") {
+      await m.getByRole("button", { name: "待確認", exact: true }).click();
+      await m.getByText(new RegExp(`手機${stamp} 將狀態從「確定考慮」改為「待確認」`)).waitFor();
+    }
+    await target.click();
     await m.getByText(new RegExp(`手機${stamp} 將狀態從「[^」]+」改為「確定考慮」`)).waitFor();
     await m.getByLabel("留言", { exact: true }).fill(`手機留言 ${stamp}`);
     await m.getByRole("button", { name: "送出留言", exact: true }).click();
@@ -442,6 +449,7 @@ async function cardCount(page) {
     await page.getByText("這個物件在回收桶裡").waitFor();
     assert.strictEqual(await post(trashId, jpegHead), 404, "回收桶中的物件沒被拒");
     await page.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "還原", exact: true }).first().click();
+    await page.getByText("這個物件在回收桶裡").waitFor({ state: "detached" });
     let cap = "（每物件上限未測）";
     if (CAP_TEST) {
       const statuses = [];
@@ -457,8 +465,10 @@ async function cardCount(page) {
     const r = page.getByRole("region", { name: "物件瀏覽" });
     const items = r.getByRole("list", { name: "照片縮圖" }).getByRole("listitem");
     if (await items.count()) await items.last().click();
+    const uploadsBefore = await r.getByRole("list", { name: "照片縮圖" }).locator('[data-photo-source="upload"]').count();
     await r.getByRole("button", { name: "刪除這張照片", exact: true }).click();
-    await r.locator('img[data-photo-source="upload"]').waitFor({ state: "detached" });
+    if (uploadsBefore <= 1) await r.locator('img[data-photo-source="upload"]').waitFor({ state: "detached" });
+    else await page.waitForFunction((n) => document.querySelectorAll('[aria-label="照片縮圖"] [data-photo-source="upload"]').length === n - 1, uploadsBefore);
     await r.getByRole("button", { name: "關閉", exact: true }).click();
     return `上傳後 ${size.w}x${size.h} 已載入（原本 ${before}）；超過 4 MB、偽裝檔、不存在與回收桶物件都被拒${cap}${refetch}`;
   });
@@ -472,7 +482,8 @@ async function cardCount(page) {
     if (!REAL) return "本機：讀不到的位址標為「無法確認」（真實下架與 403 樣本在雲端驗）";
     const results = [];
     const removed = "https://business.591.com.tw/rent/20024768";
-    const blocked = "https://www.rakuya.com.tw/rent_item/info?ehid=0000000000";
+    // From Vercel's servers this site answers with an AWS WAF bot challenge (observed 2026-11-22).
+    const blocked = "https://rent.yungching.com.tw/";
     for (const url of [removed, blocked]) {
       if ((await page.locator(`[data-source-url="${url}"]`).count()) === 0) {
         await paste(page, url);
@@ -485,7 +496,7 @@ async function cardCount(page) {
     const blockedCard = page.locator(`[data-source-url="${blocked}"]`).first();
     await blockedCard.getByText("無法確認").waitFor();
     assert.strictEqual(await blockedCard.getByText("已失效").count(), 0);
-    results.push("樂屋網（403）→ 無法確認");
+    results.push(`永慶租屋（反機器人驗證）→ 無法確認：${(await blockedCard.getAttribute("title")) || ""}`.trim());
     await page.getByRole("group", { name: "狀態篩選" }).getByRole("button", { name: /^已失效/ }).click();
     await page.locator(`[data-source-url="${removed}"]`).first().waitFor();
     assert.strictEqual(await page.locator(`[data-source-url="${blocked}"]`).count(), 0, "無法確認的物件出現在已失效篩選");
