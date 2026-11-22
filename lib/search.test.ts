@@ -16,5 +16,6 @@ describe("matchesQuery", () => {
       expect(matchesQuery(item, q), q).toBe(true);
     }
     expect(matchesQuery(item, "信義區")).toBe(false);
+    expect(matchesQuery(normalizeItem({ ...item, zone: "東區" }), "東區")).toBe(true);
   });
 });

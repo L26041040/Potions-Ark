@@ -3,12 +3,16 @@
 
 import { findLineIds, findPhones } from "./contact";
 import { cleanTitle, decodeEntities, isGenericTitle } from "./meta";
+import { detectTags } from "./tags";
+import type { AutoTag, TagKey } from "./types";
 
 export type ListingDetails = {
   /** The listing's own title from its structured data (JSON-LD), without the site name. */
   title: string;
   /** Public contact details shown on the page: agent card and numbers written in the description. */
   contact: string;
+  /** Store-condition tags the listing text states explicitly (可餐飲, 可飲酒, 頂讓). */
+  tags: Partial<Record<TagKey, AutoTag>>;
   photos: string[];
   rent: number | null;
   area: number | null;
@@ -96,6 +100,15 @@ function htmlText(fragment: string): string {
   );
 }
 
+/** The poster's own description (屋況介紹), up to the next section. */
+function articleText(html: string): string {
+  const at = html.search(/class="article/);
+  if (at < 0) return "";
+  const start = html.indexOf(">", at) + 1;
+  const end = html.indexOf("<section", start);
+  return htmlText(html.slice(start, end > start ? end : start + 30_000));
+}
+
 /**
  * Contact details a 591 page shows publicly: the role, name and company on
  * the agent card, plus phone numbers and LINE IDs the poster wrote in the
@@ -114,10 +127,8 @@ export function parseContact(html: string): string {
   } else if (company) {
     lines.push(company);
   }
-  const start = html.search(/class="article/);
-  if (start >= 0) {
-    const end = html.indexOf("<section", start);
-    const text = htmlText(html.slice(start, end > start ? end : start + 30_000));
+  const text = articleText(html);
+  if (text) {
     const phones = findPhones(text).slice(0, 3);
     const lineIds = findLineIds(text).slice(0, 2);
     if (phones.length) lines.push("電話：" + phones.join("、"));
@@ -127,7 +138,7 @@ export function parseContact(html: string): string {
 }
 
 export function parseListing(html: string, pageUrl: URL, description: string): ListingDetails {
-  const details: ListingDetails = { title: "", contact: "", photos: [], rent: null, area: null, address: "", floor: "" };
+  const details: ListingDetails = { title: "", contact: "", tags: {}, photos: [], rent: null, area: null, address: "", floor: "" };
   if (!isShopRental591(pageUrl)) return details;
   const nodes = jsonLdNodes(html);
 
@@ -141,6 +152,7 @@ export function parseListing(html: string, pageUrl: URL, description: string): L
     }
   }
   details.contact = parseContact(html);
+  details.tags = detectTags(articleText(html));
 
   const seen = new Set<string>();
   for (const node of nodes) {

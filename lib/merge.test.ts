@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyRecord, findSameListing, type MergeContext, type PageFacts } from "./merge";
+import { applyRecord, findSameListing, NO_PAGE as NO_PAGE_FOR_TEST, type MergeContext, type PageFacts } from "./merge";
 import { recordFromRow, type ImportRecord } from "./sheet";
 import { normalizeItem, type Doc, type Item } from "./types";
 
@@ -97,6 +97,7 @@ describe("applyRecord", () => {
       image: "https://img1.591.com.tw/house/2026/11/20/9.jpg",
       description: "台北市大安區店面出租：租金175000元/月，使用坪數56坪",
       contact: "代理人 李先生\n電話：0900-000-000",
+      tags: { food: { value: true, evidence: "可餐飲" } },
       photos: ["https://img1.591.com.tw/house/2026/11/20/9.jpg", "https://img2.591.com.tw/house/2026/11/20/8.jpg"],
       rent: 175000,
       area: 56,
@@ -124,6 +125,16 @@ describe("applyRecord", () => {
       health: "ok",
     });
     expect(item.photos).toHaveLength(2);
+    expect(item.autoTags).toEqual({ food: { value: true, evidence: "可餐飲" } });
+  });
+
+  it("refreshes tags read from the listing but never a shareholder's tag setting", () => {
+    const override = { food: { value: false, by: "炒飯", at: "2026-11-22T00:00:00Z" } };
+    const doc = docWith(existing({ health: "unchecked", tagOverrides: override }));
+    const page: PageFacts = { ...NO_PAGE_FOR_TEST, fetched: true, tags: { food: { value: true, evidence: "可餐飲" } }, health: "ok", healthReason: "正常" };
+    applyRecord(doc, row11, ctx({ page }));
+    expect(doc.items[0].tagOverrides).toEqual(override);
+    expect(doc.items[0].autoTags).toEqual({ food: { value: true, evidence: "可餐飲" } });
   });
 
   it("turns X into 不考慮 with a status record, but only for undecided items", () => {

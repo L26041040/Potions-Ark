@@ -1,8 +1,11 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { zoneOf } from "@/lib/compare";
 import { contactParts } from "@/lib/contact";
-import { STATUS_LABEL, type Doc, type Entry, type Item, type Status } from "@/lib/types";
+import { tagsOf } from "@/lib/tags";
+import { STATUS_LABEL, TAG_KEYS, type Doc, type Entry, type Item, type Status, type TagKey } from "@/lib/types";
+import { formatArea, formatRent, NOT_GIVEN } from "@/lib/units";
 import { hostOf, mapsUrl } from "@/lib/url";
 import { formatTime, openSource, StatusButtons } from "./bits";
 import { PhotoViewer } from "./photos";
@@ -15,6 +18,8 @@ export type DetailProps = {
   onNavigate: (id: string) => void;
   onClose: () => void;
   onStatus: (status: Status) => void;
+  /** true = 是, false = 否, null = back to automatic reading. */
+  onTag: (key: TagKey, value: boolean | null) => void;
   onEdit: () => void;
   onDelete: () => void;
   onRestore: () => void;
@@ -120,8 +125,6 @@ function EmbedView({ item }: { item: Item }) {
   );
 }
 
-const MONEY = new Intl.NumberFormat("zh-TW");
-
 /** 聯絡資訊 with phone numbers as call links and LINE IDs as LINE links. */
 function Contact({ text }: { text: string }) {
   return (
@@ -148,27 +151,82 @@ function Contact({ text }: { text: string }) {
   );
 }
 
+const ZONE_SOURCE: Record<string, string> = { 試算表商圈: "試算表", 地址: "依地址" };
+
+/** Rent, area, floor and 商圈／區域 always show, with 「未提供」 when missing. */
 function Facts({ item }: { item: Item }) {
-  const rows: [string, string][] = [];
-  if (item.rent !== null) rows.push(["月租金", `NT$ ${MONEY.format(item.rent)}`]);
-  if (item.area !== null) rows.push(["坪數", `${item.area} 坪`]);
-  if (item.floor) rows.push(["樓層", item.floor]);
-  if (item.address) rows.push(["地址", item.address]);
+  const zone = zoneOf(item);
+  const rows: { key: string; label: string; value: string; note?: string }[] = [
+    { key: "rent", label: "月租金", value: formatRent(item.rent) },
+    { key: "area", label: "坪數", value: formatArea(item.area) },
+    { key: "floor", label: "樓層", value: item.floor || NOT_GIVEN },
+    { key: "zone", label: "商圈／區域", value: zone.value || NOT_GIVEN, note: ZONE_SOURCE[zone.source] },
+  ];
+  if (item.address) rows.push({ key: "address", label: "地址", value: item.address });
   return (
     <section aria-label="物件資訊" className="space-y-2">
-      {rows.length > 0 && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-          {rows.map(([k, v]) => (
-            <div key={k} className="contents">
-              <dt className="text-stone-500">{k}</dt>
-              <dd className="font-medium">{v}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+        {rows.map((r) => (
+          <div key={r.key} className="contents">
+            <dt className="text-stone-500">{r.label}</dt>
+            <dd className={r.value === NOT_GIVEN ? "text-stone-400" : "font-medium"}>
+              <span data-fact={r.key}>{r.value}</span>
+              {r.note && <span className="ml-1 text-xs font-normal text-stone-400">（{r.note}）</span>}
+            </dd>
+          </div>
+        ))}
+      </dl>
       {item.info && <p className="whitespace-pre-wrap text-sm text-stone-600">{item.info}</p>}
       {item.contact && <Contact text={item.contact} />}
-      {!rows.length && !item.info && !item.contact && <p className="text-sm text-stone-400">尚無租金、坪數等資訊，可按「編輯」補上。</p>}
+    </section>
+  );
+}
+
+const TAG_STATE: Record<string, { text: string; style: string }> = {
+  yes: { text: "是", style: "bg-emerald-50 text-emerald-800 ring-emerald-200" },
+  no: { text: "否", style: "bg-rose-50 text-rose-800 ring-rose-200" },
+  unknown: { text: "未確認", style: "bg-stone-100 text-stone-600 ring-stone-200" },
+};
+
+/** 可餐飲／可飲酒／頂讓: state, where it came from, and the shareholder's yes / no / automatic switch. */
+function StoreTags({ item, onTag }: { item: Item; onTag: DetailProps["onTag"] }) {
+  const tags = tagsOf(item);
+  return (
+    <section aria-label="店面條件" className="space-y-1.5">
+      <h3 className="text-xs font-medium text-stone-500">店面條件（只認明確寫出的條件，可自行修正）</h3>
+      {TAG_KEYS.map((key) => {
+        const t = tags[key];
+        const set = item.tagOverrides[key];
+        const why =
+          t.source === "股東填寫" ? `股東填寫（${t.by || "匿名"}）`
+          : t.conflict ? `來源不一致，請確認：${t.evidence}`
+          : t.source ? `${t.source}：「${t.evidence}」`
+          : "沒有明確資料";
+        const choice = (label: string, value: boolean | null, pressed: boolean) => (
+          <button
+            type="button"
+            aria-pressed={pressed}
+            onClick={() => !pressed && onTag(key, value)}
+            className={`px-2 py-0.5 text-xs ${pressed ? "bg-stone-900 text-white" : "bg-white text-stone-600 hover:bg-stone-50"}`}
+          >
+            {label}
+          </button>
+        );
+        return (
+          <div key={key} role="group" aria-label={t.label} data-tag={key} data-state={t.state} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            <span className="w-12 shrink-0 font-medium">{t.label}</span>
+            <span className={`rounded-full px-2 py-px text-xs ring-1 ${TAG_STATE[t.state].style}`}>{TAG_STATE[t.state].text}</span>
+            <span className="min-w-0 flex-1 truncate text-xs text-stone-500" title={why}>
+              {why}
+            </span>
+            <span className="flex shrink-0 overflow-hidden rounded-md ring-1 ring-stone-300">
+              {choice("是", true, set?.value === true)}
+              {choice("否", false, set?.value === false)}
+              {choice("自動", null, !set)}
+            </span>
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -206,6 +264,7 @@ function Summary(props: DetailProps & { item: Item; mobile?: boolean }) {
       />
       <h2 className="text-lg font-semibold leading-snug">{item.name}</h2>
       <Facts item={item} />
+      <StoreTags item={item} onTag={props.onTag} />
       <LinkHealth item={item} />
       <StatusButtons status={item.status} onChange={props.onStatus} />
       <div className="flex flex-wrap gap-2">

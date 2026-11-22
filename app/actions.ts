@@ -12,6 +12,7 @@ import { mutate, NO_WRITE, readDoc } from "@/lib/store";
 import {
   isStatus,
   MANUAL_FIELDS,
+  TAG_KEYS,
   type ActionResult,
   type AddOutcome,
   type Doc,
@@ -20,6 +21,7 @@ import {
   type LinkCheck,
   type Photo,
   type Status,
+  type TagKey,
 } from "@/lib/types";
 import { cleanUrl, nameFromText } from "@/lib/url";
 
@@ -150,6 +152,7 @@ function readFields(input: Partial<ItemFields>): ItemFields {
     area: positiveNumber(input.area, 100_000),
     floor: text(input.floor, 40),
     contact: tidyContact(text(input.contact, 2000)),
+    zone: text(input.zone, 40),
     embed: typeof input.embed === "boolean" ? input.embed : sourceUrl.startsWith("https:"),
   };
 }
@@ -171,6 +174,8 @@ export async function addManual(input: Partial<ItemFields>, nickname: unknown): 
         id,
         ...fields,
         manual,
+        tagOverrides: {},
+        autoTags: {},
         photos: [],
         ...UNCHECKED,
         status: "new",
@@ -326,10 +331,34 @@ export async function refetchItem(id: unknown): Promise<ActionResult> {
       if (!item.coverUrl && preview.image) item.coverUrl = preview.image;
       if (!item.info && preview.description) item.info = preview.description;
       if (!item.contact && preview.contact) item.contact = preview.contact;
+      // Tags read from the listing are refreshed; shareholders' settings (tagOverrides) are never touched.
+      item.autoTags = preview.tags;
       if (!item.address && preview.address) item.address = preview.address;
       if (item.rent === null && preview.rent !== null) item.rent = preview.rent;
       if (item.area === null && preview.area !== null) item.area = preview.area;
       if (!item.floor && preview.floor) item.floor = preview.floor;
+      item.updatedAt = new Date().toISOString();
+      return true;
+    });
+    return { ok: true, doc };
+  });
+}
+
+/** Sets a store-condition tag to 是 (true) or 否 (false), or hands it back to automatic reading (null). */
+export async function setTag(id: unknown, key: unknown, value: unknown, nickname: unknown): Promise<ActionResult> {
+  return run(async () => {
+    if (!TAG_KEYS.includes(key as TagKey)) return { ok: false, error: "條件不正確" };
+    if (value !== true && value !== false && value !== null) return { ok: false, error: "條件不正確" };
+    const who = nick(nickname);
+    const { doc } = await mutate((d) => {
+      const item = findItem(d, id);
+      const tag = key as TagKey;
+      const current = item.tagOverrides[tag];
+      if (value === null ? !current : current?.value === value) return NO_WRITE;
+      const next = { ...item.tagOverrides };
+      if (value === null) delete next[tag];
+      else next[tag] = { value, by: who, at: new Date().toISOString() };
+      item.tagOverrides = next;
       item.updatedAt = new Date().toISOString();
       return true;
     });

@@ -161,6 +161,7 @@ export async function fetchPreview(rawUrl: string): Promise<Preview> {
     image: "",
     description: "",
     contact: "",
+    tags: {},
     photos: [],
     rent: null,
     area: null,

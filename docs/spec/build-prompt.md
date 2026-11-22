@@ -1,4 +1,4 @@
-# 開發指令｜Potions 二店選址倉庫（對應規格 v2.3）
+# 開發指令｜Potions 二店選址倉庫（對應規格 v2.4）
 
 給 Claude Code 的指令。大哥授權後貼這段即可：
 
@@ -14,7 +14,7 @@
 
 ### 一、依據
 
-- `docs/spec/mvp-spec.md` v2.3 與 GitHub Issues #1–#4 是依據；v2.2 功能細節與驗收以 Issue 為準，v2.3 以規格第 5 節 16–19 項為準。
+- `docs/spec/mvp-spec.md` v2.4 與 GitHub Issues #1–#5 是依據；v2.2、v2.4 功能細節與驗收以 Issue 為準，v2.3 以規格第 5 節 16–19 項為準。
 - 名詞表與 ADR 只作背景參考；與規格衝突時以規格為準。`appendix-591.md` 不必讀。
 - 寫 Next.js 程式前先讀 `node_modules/next/dist/docs/` 對應文件，這個版本與舊版差異大。
 

@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { addComment, addManual, addUrls, deleteUpload, refetchItem, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
+import { addComment, addManual, addUrls, deleteUpload, refetchItem, saveNote, setDeleted, setStatus, setTag, updateItem } from "@/app/actions";
 import { isDueForCheck } from "@/lib/health";
 import { findSameListing } from "@/lib/merge";
 import { matchesQuery } from "@/lib/search";
+import { matchesQuick, SORT_LABEL, sortItems, type QuickFilter, type SortKey } from "@/lib/compare";
+import { parseWan } from "@/lib/units";
 import { STATUS_LABEL, STATUSES, type ActionResult, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
 import { cleanUrl, extractAllUrls, extractUrl, nameFromText } from "@/lib/url";
 import { Cover, HealthBadge, readNick, StatusBadge, storeNickname, useIsDesktop, useNickname } from "./bits";
 import { BatchPanel, useBatchImport, type BatchState } from "./batch";
 import { DesktopDetail, MobileDetail, type DetailProps } from "./detail";
+import { KeyNumbers, PlaceFacts, TagChips } from "./facts";
 import { ItemDialog, NicknameDialog } from "./dialogs";
 
 type Filter = "active" | Status | "trash" | "gone";
@@ -43,6 +46,12 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   // The warehouse opens on what still needs discussing; every other filter is one tap away.
   const [filter, setFilter] = useState<Filter>("new");
   const [query, setQuery] = useState("");
+  // Sort and quick filters only change what is shown; both views share them.
+  const [sort, setSort] = useState<SortKey>("newest");
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [maxRentText, setMaxRentText] = useState("");
+  const [minAreaText, setMinAreaText] = useState("");
+  const [groundFloor, setGroundFloor] = useState(false);
   const [paste, setPaste] = useState("");
   const [pasting, setPasting] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -83,16 +92,33 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   }, [initialDoc]);
 
   const q = query.trim().toLowerCase();
-  const visible = doc.items
-    .filter((i) => i.id === openId || (matchesFilter(i, filter) && matchesQuery(i, q)))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const maxRent = parseWan(maxRentText);
+  const minArea = Number(minAreaText.replace(/[,\s坪]/g, ""));
+  const quick: QuickFilter = {
+    maxRent: maxRent !== null && !Number.isNaN(maxRent) ? maxRent : null,
+    minArea: minAreaText.trim() && Number.isFinite(minArea) && minArea > 0 ? minArea : null,
+    groundFloor,
+  };
+  const quickCount = (quick.maxRent !== null ? 1 : 0) + (quick.minArea !== null ? 1 : 0) + (quick.groundFloor ? 1 : 0);
+  const visible = sortItems(
+    doc.items.filter((i) => i.id === openId || (matchesFilter(i, filter) && matchesQuery(i, q) && matchesQuick(i, quick))),
+    sort,
+  );
+  function clearQuick() {
+    setMaxRentText("");
+    setMinAreaText("");
+    setGroundFloor(false);
+  }
   const openItem = openId ? doc.items.find((i) => i.id === openId) ?? null : null;
   const index = openItem ? visible.findIndex((i) => i.id === openItem.id) : -1;
   const counts = Object.fromEntries(FILTERS.map((f) => [f.key, doc.items.filter((i) => matchesFilter(i, f.key)).length]));
   // A search also tells which other filters hold matches, so nothing seems missing.
   const elsewhere = q
     ? FILTERS.filter((f) => f.key !== filter && f.key !== "active" && f.key !== "gone")
-        .map((f) => ({ ...f, n: doc.items.filter((i) => matchesFilter(i, f.key) && !matchesFilter(i, filter) && matchesQuery(i, q)).length }))
+        .map((f) => ({
+          ...f,
+          n: doc.items.filter((i) => matchesFilter(i, f.key) && !matchesFilter(i, filter) && matchesQuery(i, q) && matchesQuick(i, quick)).length,
+        }))
         .filter((f) => f.n > 0)
     : [];
 
@@ -280,6 +306,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
         onNavigate: openItemById,
         onClose: close,
         onStatus: (status) => openItem && run((nick) => setStatus(openItem.id, status, nick)),
+        onTag: (key, value) => openItem && run((nick) => setTag(openItem.id, key, value, nick)),
         onEdit: () => openItem && setDialog({ kind: "edit", id: openItem.id }),
         onDelete: () => {
           if (openItem && window.confirm(`確定要刪除「${openItem.name}」嗎？刪除後可在回收桶還原。`)) {
@@ -391,6 +418,71 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                 </button>
               ))}
             </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <label className="flex items-center gap-1 text-stone-600">
+                排序
+                <select
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value as SortKey)}
+                  aria-label="排序"
+                  className="rounded-lg border border-stone-300 bg-white px-2 py-1 text-[16px] sm:text-sm"
+                >
+                  {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
+                    <option key={k} value={k}>
+                      {SORT_LABEL[k]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                aria-expanded={quickOpen}
+                onClick={() => setQuickOpen((v) => !v)}
+                className={`rounded-lg px-2.5 py-1 ring-1 ${quickCount ? "bg-amber-50 text-amber-900 ring-amber-300" : "bg-white text-stone-700 ring-stone-300"}`}
+              >
+                條件篩選{quickCount ? `（${quickCount}）` : ""} {quickOpen ? "▴" : "▾"}
+              </button>
+              {quickCount > 0 && (
+                <button type="button" onClick={clearQuick} className="rounded-lg px-2 py-1 text-stone-600 underline underline-offset-2">
+                  清除條件
+                </button>
+              )}
+              <span className="ml-auto text-xs text-stone-500" aria-label="顯示筆數">
+                顯示 {visible.length} 筆
+              </span>
+            </div>
+            {quickOpen && (
+              <div role="group" aria-label="條件篩選" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-white p-2 text-sm ring-1 ring-stone-200">
+                <label className="flex items-center gap-1">
+                  <span className="text-stone-600">租金上限</span>
+                  <input
+                    value={maxRentText}
+                    onChange={(e) => setMaxRentText(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="例如 18"
+                    aria-label="最高月租金（萬元）"
+                    className="w-20 rounded-md border border-stone-300 px-2 py-1 text-[16px] sm:text-sm"
+                  />
+                  <span className="text-stone-500">萬</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <span className="text-stone-600">坪數至少</span>
+                  <input
+                    value={minAreaText}
+                    onChange={(e) => setMinAreaText(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="例如 40"
+                    aria-label="最低坪數"
+                    className="w-20 rounded-md border border-stone-300 px-2 py-1 text-[16px] sm:text-sm"
+                  />
+                  <span className="text-stone-500">坪</span>
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={groundFloor} onChange={(e) => setGroundFloor(e.target.checked)} className="h-4 w-4" />
+                  必須包含一樓
+                </label>
+              </div>
+            )}
           </div>
 
           {elsewhere.length > 0 && (
@@ -421,18 +513,20 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                   data-item-id={item.id}
                   data-source-url={item.sourceUrl || undefined}
                   onClick={() => openItemById(item.id)}
-                  className={`overflow-hidden rounded-xl bg-white text-left shadow-sm ring-1 transition hover:shadow ${
+                  className={`flex flex-col overflow-hidden rounded-xl bg-white text-left shadow-sm ring-1 transition hover:shadow ${
                     item.id === openId ? "ring-2 ring-stone-900" : "ring-stone-200"
                   } ${item.deletedAt ? "opacity-60" : ""}`}
                 >
-                  <div className="relative aspect-[4/3] bg-stone-100">
+                  <div className="relative aspect-[4/3] w-full bg-stone-100">
                     <Cover item={item} className="absolute inset-0 h-full w-full" />
                     <StatusBadge status={item.status} className="absolute left-1.5 top-1.5 shadow-sm" />
                     <HealthBadge item={item} className="absolute right-1.5 top-1.5 shadow-sm" />
                   </div>
-                  <div className="p-2">
-                    <div className="line-clamp-2 text-sm font-medium leading-snug">{item.name}</div>
-                    {item.info && <div className="mt-0.5 truncate text-xs text-stone-500">{item.info}</div>}
+                  <div className="w-full space-y-1 p-2">
+                    <div className="line-clamp-2 text-sm font-medium leading-snug" data-name>{item.name}</div>
+                    <KeyNumbers item={item} big />
+                    <PlaceFacts item={item} />
+                    <TagChips item={item} />
                   </div>
                 </button>
               ))}
@@ -451,9 +545,13 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                     }`}
                   >
                     <Cover item={item} className="h-12 w-16 shrink-0 rounded-md" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{item.name}</div>
-                      {item.info && <div className="truncate text-xs text-stone-500">{item.info}</div>}
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <div className="truncate text-sm font-medium" data-name>{item.name}</div>
+                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                        <KeyNumbers item={item} />
+                        <PlaceFacts item={item} />
+                        <TagChips item={item} />
+                      </div>
                     </div>
                     <HealthBadge item={item} />
                     <StatusBadge status={item.status} />

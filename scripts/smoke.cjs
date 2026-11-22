@@ -159,9 +159,8 @@ async function showFilter(page, label) {
     listingId = await page.locator(`[data-source-url="${LISTING}"]`).first().getAttribute("data-item-id");
     assert.ok(listingId, "倉庫裡找不到這個 591 物件");
     assert.strictEqual((await cardIds(page)).length, before.length + (existed ? 0 : 1));
-    const name = await page.locator(`[data-item-id="${listingId}"]`).first().innerText();
-    const longest = name.split("\n").sort((x, y) => y.length - x.length)[0];
-    return `名稱：${longest.slice(0, 30)}${existed ? "（先前已收藏）" : ""}`;
+    const name = await page.locator(`[data-item-id="${listingId}"] [data-name]`).first().innerText();
+    return `名稱：${name.slice(0, 30)}${existed ? "（先前已收藏）" : ""}`;
   });
 
   await check("3 點卡片才開啟；右側是本站原生預覽（照片、資訊），iframe 預設關閉可選配", async () => {
@@ -575,6 +574,154 @@ async function showFilter(page, label) {
     return "編輯→顯示→tel／LINE 連結→以姓名、電話（有無橫線）搜尋→重新整理後仍在";
   });
 
+  await check("24 比較介面：卡片／列表／詳細的租金（萬元）坪數樓層商圈一致、六種排序、三種快速篩選、標籤人工修正", async () => {
+    const tag = `比較${stamp}`;
+    // A: rent and area, ground floor, 可餐飲 in the title. B: rent only, 2F, 不可餐飲. C: area only, no floor, hedged 頂讓.
+    const specs = [
+      { key: "A", name: `${tag}-A 可餐飲`, rent: "10", area: "30", floor: "1F/7F", zone: `商圈${stamp}` },
+      { key: "B", name: `${tag}-B 不可餐飲`, rent: "20.5", area: "", floor: "2F/16F", zone: "" },
+      { key: "C", name: `${tag}-C 看起來是頂讓`, rent: "", area: "50", floor: "", zone: "" },
+    ];
+    await showFilter(page, "全部");
+    const ids = {};
+    for (const sp of specs) {
+      await page.getByRole("button", { name: "手動新增", exact: true }).click();
+      const d = page.getByRole("dialog", { name: "手動新增物件" });
+      await d.getByLabel("名稱（必填）", { exact: true }).fill(sp.name);
+      await d.getByLabel("月租金（萬元）", { exact: true }).fill(sp.rent);
+      await d.getByLabel("坪數", { exact: true }).fill(sp.area);
+      await d.getByLabel("樓層", { exact: true }).fill(sp.floor);
+      await d.getByLabel("商圈／區域", { exact: true }).fill(sp.zone);
+      await d.getByRole("button", { name: "新增", exact: true }).click();
+      await d.waitFor({ state: "detached" });
+      const card = page.locator("[data-item-id]").filter({ hasText: sp.name }).first();
+      await card.waitFor();
+      ids[sp.key] = await card.getAttribute("data-item-id");
+    }
+    const search = page.getByLabel("搜尋", { exact: true });
+    await search.fill(tag);
+    await page.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 3);
+    const facts = (root) => root.evaluate((el) => Object.fromEntries([...el.querySelectorAll("[data-fact]")].map((f) => [f.dataset.fact, f.textContent.trim()])));
+    // Card, list row and detail show the same values.
+    const expected = {
+      A: { rent: "10萬/月", area: "30坪", floor: "1F/7F", zone: `商圈${stamp}`, tags: "可餐飲" },
+      B: { rent: "20.5萬/月", area: "未提供", floor: "2F/16F", zone: "未提供" },
+      C: { rent: "未提供", area: "50坪", floor: "未提供", zone: "未提供" },
+    };
+    for (const [k, want] of Object.entries(expected)) {
+      assert.deepStrictEqual(await facts(page.locator(`[data-item-id="${ids[k]}"]`)), want, `卡片 ${k}`);
+    }
+    await page.getByRole("button", { name: "列表", exact: true }).click();
+    for (const [k, want] of Object.entries(expected)) {
+      assert.deepStrictEqual(await facts(page.locator(`ul [data-item-id="${ids[k]}"]`)), want, `列表 ${k}`);
+    }
+    await page.getByRole("button", { name: "圖庫", exact: true }).click();
+    await page.locator(`[data-item-id="${ids.A}"]`).click();
+    const region = page.getByRole("region", { name: "物件瀏覽" });
+    const detailFacts = await facts(region.locator('[aria-label="物件資訊"]').first());
+    assert.deepStrictEqual({ rent: detailFacts.rent, area: detailFacts.area, floor: detailFacts.floor, zone: detailFacts.zone }, { rent: "10萬/月", area: "30坪", floor: "1F/7F", zone: `商圈${stamp}` });
+    // Rent is edited in 萬元: 10.68 is stored as 106,800 元; saving untouched keeps it.
+    await region.getByRole("button", { name: "編輯", exact: true }).click();
+    let d = page.getByRole("dialog", { name: "編輯物件" });
+    assert.strictEqual(await d.getByLabel("月租金（萬元）", { exact: true }).inputValue(), "10");
+    await d.getByLabel("月租金（萬元）", { exact: true }).fill("10.68");
+    await d.getByText("＝ 106,800 元/月").waitFor();
+    await d.getByRole("button", { name: "儲存", exact: true }).click();
+    await region.locator('[data-fact="rent"]').filter({ hasText: "10.68萬/月" }).waitFor();
+    await region.getByRole("button", { name: "編輯", exact: true }).click();
+    d = page.getByRole("dialog", { name: "編輯物件" });
+    assert.strictEqual(await d.getByLabel("月租金（萬元）", { exact: true }).inputValue(), "10.68");
+    await d.getByRole("button", { name: "儲存", exact: true }).click();
+    await d.waitFor({ state: "detached" });
+    assert.strictEqual(await region.locator('[data-fact="rent"]').innerText(), "10.68萬/月");
+    // Tags: read from the title, corrected by hand, survive a reload, and go back to automatic.
+    const food = (r) => r.getByRole("group", { name: "可餐飲" });
+    assert.strictEqual(await food(region).getAttribute("data-state"), "yes");
+    await food(region).getByRole("button", { name: "否", exact: true }).click();
+    await region.locator('[data-tag="food"][data-state="no"]').waitFor();
+    await page.reload();
+    await showFilter(page, "全部");
+    const r2 = page.getByRole("region", { name: "物件瀏覽" });
+    await r2.locator('[data-tag="food"][data-state="no"]').waitFor();
+    await food(r2).getByText(/股東填寫/).waitFor();
+    await food(r2).getByRole("button", { name: "自動", exact: true }).click();
+    await r2.locator('[data-tag="food"][data-state="yes"]').waitFor();
+    await r2.getByRole("button", { name: "關閉", exact: true }).click();
+    await page.locator(`[data-item-id="${ids.B}"]`).click();
+    await r2.locator('[data-tag="food"][data-state="no"]').waitFor();
+    await r2.getByRole("button", { name: "關閉", exact: true }).click();
+    await page.locator(`[data-item-id="${ids.C}"]`).click();
+    await r2.locator('[data-tag="transfer"][data-state="unknown"]').waitFor();
+    await r2.getByRole("button", { name: "關閉", exact: true }).click();
+    // Sorting: same order in both views, kept when switching, missing values last.
+    await search.fill(tag);
+    await page.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 3);
+    const order = async () => (await cardIds(page)).map((id) => Object.keys(ids).find((k) => ids[k] === id)).join("");
+    const sorts = { 最新新增: "CBA", 最早新增: "ABC", 租金低到高: "ABC", 租金高到低: "BAC", 坪數小到大: "ACB", 坪數大到小: "CAB" };
+    for (const [label, want] of Object.entries(sorts)) {
+      await page.getByLabel("排序", { exact: true }).selectOption({ label });
+      assert.strictEqual(await order(), want, `圖庫 ${label}`);
+      await page.getByRole("button", { name: "列表", exact: true }).click();
+      assert.strictEqual(await order(), want, `列表 ${label}`);
+      await page.getByRole("button", { name: "圖庫", exact: true }).click();
+      assert.strictEqual(await order(), want, `切回圖庫後仍是 ${label}`);
+    }
+    await page.getByLabel("排序", { exact: true }).selectOption({ label: "最新新增" });
+    // Quick filters, alone and together; items without the data never match.
+    await page.getByRole("button", { name: /^條件篩選/ }).click();
+    const quick = page.getByRole("group", { name: "條件篩選" });
+    const expectShown = async (want, why) => {
+      await page.waitForFunction((n) => document.querySelectorAll("[data-item-id]").length === n, want.length);
+      assert.strictEqual(await order(), want, why);
+    };
+    await quick.getByLabel("最高月租金（萬元）", { exact: true }).fill("15");
+    await expectShown("A", "租金上限 15 萬");
+    await quick.getByLabel("最高月租金（萬元）", { exact: true }).fill("");
+    await quick.getByLabel("最低坪數", { exact: true }).fill("40");
+    await expectShown("C", "坪數至少 40");
+    await quick.getByLabel("最低坪數", { exact: true }).fill("");
+    await quick.getByLabel("必須包含一樓").check();
+    await expectShown("A", "必須含一樓");
+    await quick.getByLabel("最高月租金（萬元）", { exact: true }).fill("25");
+    await expectShown("A", "租金上限 25 萬＋一樓");
+    await page.getByRole("button", { name: "清除條件", exact: true }).click();
+    await expectShown("CBA", "清除條件");
+    await page.getByRole("button", { name: /^條件篩選/ }).click();
+    await search.fill("");
+    return "三視圖數值一致、萬元編輯 10.68→106,800 且原值保留、六種排序、三種篩選與清除、標籤自動／人工／還原自動皆正確";
+  });
+
+  await check("25 手機：卡片與列表看得到租金坪數、排序與條件篩選可用、詳細面板有店面條件", async () => {
+    const mobile = await browser.newContext({ ...devices["iPhone 13"] });
+    await stubExternal(mobile);
+    await mobile.addInitScript((n) => localStorage.setItem("potions-nickname", n), `手機${stamp}`);
+    const m = await mobile.newPage();
+    await m.goto(BASE);
+    await showFilter(m, "全部");
+    await m.getByLabel("搜尋", { exact: true }).fill(`比較${stamp}`);
+    await m.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 3);
+    const card = m.locator("[data-item-id]").filter({ hasText: `比較${stamp}-A` }).first();
+    assert.strictEqual(await card.locator('[data-fact="rent"]').innerText(), "10.68萬/月");
+    assert.ok(await card.locator('[data-fact="rent"]').isVisible());
+    const overflow = await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert.ok(overflow <= 1, `手機版橫向溢出 ${overflow}px`);
+    await m.getByLabel("排序", { exact: true }).selectOption({ label: "租金高到低" });
+    await m.getByRole("button", { name: /^條件篩選/ }).click();
+    await m.getByRole("group", { name: "條件篩選" }).getByLabel("必須包含一樓").check();
+    await m.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 1);
+    await m.getByRole("button", { name: "清除條件", exact: true }).click();
+    await m.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 3);
+    await m.getByRole("button", { name: "列表", exact: true }).click();
+    assert.strictEqual(await m.locator('ul [data-fact="rent"]').first().innerText(), "20.5萬/月");
+    await m.locator(`ul [data-item-id]`).filter({ hasText: `比較${stamp}-A` }).click();
+    await m.getByRole("group", { name: "可餐飲" }).waitFor();
+    await m.getByRole("button", { name: "編輯", exact: true }).click();
+    await m.getByRole("dialog", { name: "編輯物件" }).getByLabel("月租金（萬元）", { exact: true }).waitFor();
+    await m.getByRole("dialog", { name: "編輯物件" }).getByRole("button", { name: "取消", exact: true }).click();
+    await mobile.close();
+    return "iPhone 13：無橫向溢出、排序與條件篩選可用並可清除、列表與詳細面板正常";
+  });
+
   if (REAL) {
     await check("22 591 App 分享連結（591.to）存成物件本身的網址並帶入照片，與網頁版連結去重", async () => {
       const share = "https://591.to/elOXb";
@@ -643,6 +790,27 @@ async function showFilter(page, label) {
       assert.strictEqual(after[trashed.id].healthAt, old, "回收桶的物件被重檢");
       assert.strictEqual(after[rejected.id].status, "rejected", "股東狀態被改了");
       return `到期物件已重檢（${after[due.id].health}：${after[due.id].healthReason}），其他三個未動`;
+    });
+
+    await check("26 不改租金就儲存：不是整百元的原值也不變，且不算手動修改", async () => {
+      const fs = require("fs");
+      const file = process.env.LOCAL_DATA;
+      const data = JSON.parse(fs.readFileSync(file, "utf8"));
+      const target = data.items.find((i) => !i.deletedAt && i.status !== "rejected");
+      Object.assign(target, { rent: 602140, manual: [] });
+      fs.writeFileSync(file, JSON.stringify(data));
+      await page.goto(`${BASE}/?item=${target.id}`);
+      const region = page.getByRole("region", { name: "物件瀏覽" });
+      await region.locator('[data-fact="rent"]').filter({ hasText: "60.21萬/月" }).waitFor();
+      await region.getByRole("button", { name: "編輯", exact: true }).click();
+      const d = page.getByRole("dialog", { name: "編輯物件" });
+      assert.strictEqual(await d.getByLabel("月租金（萬元）", { exact: true }).inputValue(), "60.214");
+      await d.getByRole("button", { name: "儲存", exact: true }).click();
+      await d.waitFor({ state: "detached" });
+      const saved = JSON.parse(fs.readFileSync(file, "utf8")).items.find((i) => i.id === target.id);
+      assert.strictEqual(saved.rent, 602140);
+      assert.ok(!saved.manual.includes("rent"), `manual: ${saved.manual}`);
+      return "602,140 元顯示 60.21萬/月，編輯欄位 60.214，儲存後仍是 602,140 且不列入手動修改";
     });
   }
 

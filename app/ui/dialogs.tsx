@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { Item, ItemFields } from "@/lib/types";
+import { zoneOf } from "@/lib/compare";
+import { parseWan, rentInput } from "@/lib/units";
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   useEffect(() => {
@@ -87,15 +89,22 @@ export function ItemDialog({
     area: item?.area ?? null,
     floor: item?.floor ?? "",
     contact: item?.contact ?? "",
+    zone: item?.zone ?? "",
     embed: item?.embed ?? true,
   });
-  const [rentText, setRentText] = useState(item?.rent != null ? String(item.rent) : "");
+  // Rent is typed in 萬元 and stored in 元. The form starts from the exact stored value,
+  // and an untouched field sends the stored value back unchanged.
+  const initialRent = rentInput(item?.rent ?? null);
+  const [rentText, setRentText] = useState(initialRent);
   const [areaText, setAreaText] = useState(item?.area != null ? String(item.area) : "");
+  const rent = rentText === initialRent ? (item?.rent ?? null) : parseWan(rentText);
+  const rentError = Number.isNaN(rent) ? "請輸入數字（萬元），例如 15.6" : rent !== null && rent > 100_000_000 ? "單位是萬元，例如 15.6 代表 156,000 元" : "";
+  const autoZone = item ? zoneOf({ ...item, zone: "" }).value : "";
   const set = <K extends keyof ItemFields>(key: K, value: ItemFields[K]) => setFields((f) => ({ ...f, [key]: value }));
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const toNumber = (t: string) => (t.trim() ? Number(t.replace(/,/g, "")) : null);
-    if (fields.name.trim()) onSubmit({ ...fields, rent: toNumber(rentText), area: toNumber(areaText) });
+    if (fields.name.trim() && !rentError) onSubmit({ ...fields, rent, area: toNumber(areaText) });
   };
   return (
     <Modal title={mode === "add" ? "手動新增物件" : "編輯物件"} onClose={onCancel}>
@@ -107,16 +116,32 @@ export function ItemDialog({
           <textarea value={fields.info} onChange={(e) => set("info", e.target.value)} maxLength={500} rows={3} className={input} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="月租金（元）">
-            <input value={rentText} onChange={(e) => setRentText(e.target.value)} inputMode="numeric" placeholder="例如 45000" className={input} />
+          <Field label="月租金（萬元）">
+            <input value={rentText} onChange={(e) => setRentText(e.target.value)} inputMode="decimal" placeholder="例如 15.6" className={input} aria-label="月租金（萬元）" aria-describedby="rent-hint" aria-invalid={Boolean(rentError)} />
+            {rentError ? (
+              <span id="rent-hint" className="mt-1 block text-xs text-rose-700">{rentError}</span>
+            ) : (
+              rent !== null && <span id="rent-hint" className="mt-1 block text-xs text-stone-500">＝ {rent.toLocaleString("zh-TW")} 元/月</span>
+            )}
           </Field>
           <Field label="坪數">
             <input value={areaText} onChange={(e) => setAreaText(e.target.value)} inputMode="decimal" placeholder="例如 24.5" className={input} />
           </Field>
         </div>
-        <Field label="樓層">
-          <input value={fields.floor} onChange={(e) => set("floor", e.target.value)} maxLength={40} placeholder="例如 1F/5F" className={input} />
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="樓層">
+            <input value={fields.floor} onChange={(e) => set("floor", e.target.value)} maxLength={40} placeholder="例如 1F/5F、1F+B1" className={input} />
+          </Field>
+          <Field label="商圈／區域">
+            <input
+              value={fields.zone}
+              onChange={(e) => set("zone", e.target.value)}
+              maxLength={40}
+              placeholder={autoZone ? `自動：${autoZone}` : "例如 東區"}
+              className={input}
+            />
+          </Field>
+        </div>
         <Field label="地址（填了才會出現 Google Maps 連結）">
           <input value={fields.address} onChange={(e) => set("address", e.target.value)} maxLength={200} className={input} />
         </Field>
@@ -146,7 +171,7 @@ export function ItemDialog({
         )}
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onCancel} className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100">取消</button>
-          <button type="submit" disabled={busy || !fields.name.trim()} className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
+          <button type="submit" disabled={busy || !fields.name.trim() || Boolean(rentError)} className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
             {busy ? "儲存中…" : mode === "add" ? "新增" : "儲存"}
           </button>
         </div>

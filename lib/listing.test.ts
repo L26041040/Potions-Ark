@@ -49,6 +49,7 @@ describe("parseListing", () => {
     expect(details).toEqual({
       title: "測試店面",
       contact: "",
+      tags: {},
       photos: [
         "https://img1.591.com.tw/house/2026/07/20/111.jpg!1000x.water2.jpg",
         "https://img2.591.com.tw/house/2026/07/20/222.jpg!1000x.water2.jpg",
@@ -61,20 +62,20 @@ describe("parseListing", () => {
   });
 
   it("reads only shop rental pages: sale and residential pages keep just their cover, and a sale price is never rent", () => {
-    const none = { title: "", contact: "", photos: [], rent: null, area: null, address: "", floor: "" };
+    const none = { title: "", contact: "", tags: {}, photos: [], rent: null, area: null, address: "", floor: "" };
     expect(parseListing(page591([listing, place]), new URL("https://business.591.com.tw/sale/123"), "台北市大同區店面出售：總價5000萬")).toEqual(none);
     expect(parseListing(page591([listing, place]), new URL("https://rent.591.com.tw/123"), description)).toEqual(none);
   });
 
   it("leaves fields empty instead of failing when the page has no usable data", () => {
-    const empty = { title: "", contact: "", photos: [], rent: null, area: null, address: "", floor: "" };
+    const empty = { title: "", contact: "", tags: {}, photos: [], rent: null, area: null, address: "", floor: "" };
     expect(parseListing("<html><head></head></html>", new URL("https://business.591.com.tw/rent/1"), "")).toEqual(empty);
     expect(parseListing('<script type="application/ld+json">{not json</script>', new URL("https://business.591.com.tw/rent/1"), "")).toEqual(empty);
   });
 
   it("only reads structured data on 591, other sites keep just their cover image", () => {
     const details = parseListing(page591([listing, place]), new URL("https://www.example-realty.com.tw/rent/123"), description);
-    expect(details).toEqual({ title: "", contact: "", photos: [], rent: null, area: null, address: "", floor: "" });
+    expect(details).toEqual({ title: "", contact: "", tags: {}, photos: [], rent: null, area: null, address: "", floor: "" });
   });
 
   it("takes the title from the listing's structured data even when og:title only names the site", () => {
@@ -96,6 +97,15 @@ describe("parseListing", () => {
     expect(parseContact(contactHtml.replace("王測試", "測試國..."))).toMatch(/^仲介｜測試不動產/);
     expect(parseContact('<span class="name"><em>屋主:</em> 張先生</span>')).toBe("屋主 張先生");
     expect(parseContact("<p>沒有聯絡資料</p>")).toBe("");
+  });
+
+  it("reads store conditions the listing text states explicitly, with the words that decided them", () => {
+    const url = new URL("https://business.591.com.tw/rent/1");
+    const body = '<div class="article"><p>本店面可餐飲、可營登</p><p>不可飲酒</p><p>看起來是頂讓</p></div><section class="contact-card">可飲酒</section>';
+    expect(parseListing(page591([listing, place], body), url, "").tags).toEqual({
+      food: { value: true, evidence: "本店面可餐飲、可營登" },
+      alcohol: { value: false, evidence: "不可飲酒" },
+    });
   });
 });
 

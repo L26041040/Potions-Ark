@@ -15,6 +15,17 @@ export type Health = "unchecked" | "ok" | "gone" | "unknown";
 /** The result of one link check, always saved together. */
 export type LinkCheck = { health: Health; healthAt: string | null; healthReason: string };
 
+/** Store conditions shown as tags: 可餐飲, 可飲酒, 頂讓. */
+export type TagKey = "food" | "alcohol" | "transfer";
+
+export const TAG_KEYS: TagKey[] = ["food", "alcohol", "transfer"];
+
+/** A shareholder's yes/no for one tag; always wins over what was read automatically. */
+export type TagOverride = { value: boolean; by: string; at: string };
+
+/** What a page read found for one tag, with the words that decided it. */
+export type AutoTag = { value: boolean; evidence: string };
+
 export type Photo = {
   id: string;
   /** "listing": shown straight from the listing site. "upload": stored in our Blob store. */
@@ -37,6 +48,12 @@ export type Item = {
   floor: string;
   /** Free text: agency, contact person, phone, LINE ID and other notes. */
   contact: string;
+  /** 商圈或區域 typed by a shareholder; empty means it is worked out from the item's other data. */
+  zone: string;
+  /** Shareholders' settings for store-condition tags. */
+  tagOverrides: Partial<Record<TagKey, TagOverride>>;
+  /** Store-condition tags found in the 591 listing text when the page was read. */
+  autoTags: Partial<Record<TagKey, AutoTag>>;
   photos: Photo[];
   embed: boolean;
   /**
@@ -86,12 +103,13 @@ export type ItemFields = {
   area: number | null;
   floor: string;
   contact: string;
+  zone: string;
   embed: boolean;
 };
 
 export type ManualField = Exclude<keyof ItemFields, "embed">;
 
-export const MANUAL_FIELDS: ManualField[] = ["name", "sourceUrl", "coverUrl", "info", "address", "rent", "area", "floor", "contact"];
+export const MANUAL_FIELDS: ManualField[] = ["name", "sourceUrl", "coverUrl", "info", "address", "rent", "area", "floor", "contact", "zone"];
 
 /** What happened to one link in a batch add. */
 export type AddOutcome = {
@@ -116,6 +134,9 @@ export function normalizeItem(raw: Item): Item {
     area: typeof raw.area === "number" ? raw.area : null,
     floor: raw.floor ?? "",
     contact: typeof raw.contact === "string" ? raw.contact : "",
+    zone: typeof raw.zone === "string" ? raw.zone : "",
+    tagOverrides: raw.tagOverrides && typeof raw.tagOverrides === "object" ? raw.tagOverrides : {},
+    autoTags: raw.autoTags && typeof raw.autoTags === "object" ? raw.autoTags : {},
     photos: Array.isArray(raw.photos) ? raw.photos : [],
     manual: Array.isArray(raw.manual) ? raw.manual.filter((f) => (MANUAL_FIELDS as string[]).includes(f)) : [],
     health: raw.health ?? "unchecked",

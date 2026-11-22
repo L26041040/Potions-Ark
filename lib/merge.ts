@@ -16,6 +16,7 @@ export type PageFacts = {
   image: string;
   description: string;
   contact: string;
+  tags: Item["autoTags"];
   photos: string[];
   rent: number | null;
   area: number | null;
@@ -32,6 +33,7 @@ export const NO_PAGE: PageFacts = {
   image: "",
   description: "",
   contact: "",
+  tags: {},
   photos: [],
   rent: null,
   area: null,
@@ -82,6 +84,9 @@ export function itemFromPage(id: string, url: string, typedName: string, page: P
     area: page.area,
     floor: page.floor,
     contact: page.contact,
+    zone: "",
+    tagOverrides: {},
+    autoTags: page.tags,
     photos: listingPhotos(page.photos, newId),
     embed: page.embed,
     manual: !title && typedName ? ["name"] : [],
@@ -232,6 +237,10 @@ export function applyRecord(doc: Doc, record: ImportRecord, ctx: MergeContext): 
     fill("address", page.address);
     fill("contact", page.contact);
     fill("info", isGenericDescription(page.description) ? "" : page.description);
+    if (JSON.stringify(item.autoTags) !== JSON.stringify(page.tags)) {
+      item.autoTags = page.tags;
+      changed.push("autoTags");
+    }
     for (const field of ["rent", "area"] as const) {
       if (item[field] === null && page[field] !== null) {
         item[field] = page[field];
