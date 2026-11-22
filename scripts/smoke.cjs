@@ -148,7 +148,6 @@ async function cardCount(page) {
     assert.strictEqual(await region.locator("iframe").count(), 0, "預設就嵌入了 iframe");
     let detail = "";
     if (REAL) {
-      const thumbList = region.getByRole("list", { name: "照片縮圖" }).getByRole("listitem");
       const listingThumbs = region.getByRole("list", { name: "照片縮圖" }).locator('[data-photo-source="listing"]');
       if ((await listingThumbs.count()) < 2) {
         // Saved by an older version: only a cover. Reloading must bring in the photos without re-creating the item.
