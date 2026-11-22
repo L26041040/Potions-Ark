@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { addComment, addFromPaste, addManual, saveNote, setDeleted, setStatus, updateItem } from "@/app/actions";
 import { STATUS_LABEL, STATUSES, type ActionResult, type Doc, type Item, type ItemFields, type Status } from "@/lib/types";
 import { cleanUrl, extractUrl } from "@/lib/url";
@@ -50,6 +50,8 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   const isDesktop = useIsDesktop();
   const [nickWaiter, setNickWaiter] = useState<((name: string | null) => void) | null>(null);
   const [lastOpened, setLastOpened] = useState<string | null>(initialItemId);
+  const [scrollTo, setScrollTo] = useState<{ id: string } | null>(null);
+  const pasteRef = useRef<HTMLInputElement>(null);
 
   const q = query.trim().toLowerCase();
   const visible = doc.items
@@ -93,6 +95,15 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
     });
     return () => cancelAnimationFrame(frame);
   }, [openId, lastOpened, isDesktop]);
+
+  // A newly added card is scrolled into view; nothing is opened.
+  useEffect(() => {
+    if (!scrollTo) return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector(`[data-item-id="${CSS.escape(scrollTo.id)}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scrollTo]);
 
   useEffect(() => {
     if (!openId || dialog || askNick) return;
@@ -142,10 +153,19 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
     return res;
   }
 
-  function reveal(id: string) {
+  /**
+   * After adding, the shareholder stays in the warehouse so the next link can be
+   * pasted right away. The panel only opens when a card is clicked.
+   */
+  function showAdded(id: string) {
     setQuery("");
     if (filter !== "active" && filter !== "new") setFilter("active");
-    openItemById(id);
+    setScrollTo({ id });
+  }
+
+  function resetPasteBox() {
+    setPaste("");
+    pasteRef.current?.focus();
   }
 
   // ---- Actions ----
@@ -161,8 +181,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
     }
     const dup = doc.items.find((i) => !i.deletedAt && i.sourceUrl === url);
     if (dup) {
-      setPaste("");
-      reveal(dup.id);
+      resetPasteBox();
       setToast({ text: "這個物件已經在倉庫裡" });
       return;
     }
@@ -172,13 +191,13 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
     const res = await run(() => addFromPaste(raw, nick));
     setPasting(false);
     if (!res?.ok || !res.id) return;
-    setPaste("");
-    reveal(res.id);
-    if (res.existing) setToast({ text: "這個物件已經在倉庫裡" });
-    else if (!res.fetched) {
-      setToast({ text: "讀不到這個網站的資料，請補上名稱與資訊" });
-      setDialog({ kind: "edit", id: res.id });
-    } else setToast({ text: "已收藏" });
+    resetPasteBox();
+    if (res.existing) {
+      setToast({ text: "這個物件已經在倉庫裡" });
+      return;
+    }
+    showAdded(res.id);
+    setToast({ text: res.fetched ? "已收藏" : "已收藏，但讀不到網站資料，可稍後在物件中補填" });
   }
 
   async function onSubmitItem(fields: ItemFields) {
@@ -191,7 +210,10 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
     setSaving(false);
     if (!res?.ok) return;
     setDialog(null);
-    if (dialog.kind === "add" && res.id) reveal(res.id);
+    if (dialog.kind === "add" && res.id) {
+      showAdded(res.id);
+      setToast({ text: "已新增" });
+    }
   }
 
   const detailProps: DetailProps | null = openId
@@ -225,6 +247,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
           <h1 className="whitespace-nowrap text-base font-semibold">Potions 二店選址倉庫</h1>
           <form onSubmit={onPaste} className="order-3 flex w-full gap-2 md:order-none md:w-auto md:flex-1">
             <input
+              ref={pasteRef}
               value={paste}
               onChange={(e) => setPaste(e.target.value)}
               placeholder="貼上 591 或其他房仲網址"
@@ -306,6 +329,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                   key={item.id}
                   type="button"
                   data-item-id={item.id}
+                  data-source-url={item.sourceUrl || undefined}
                   onClick={() => openItemById(item.id)}
                   className={`overflow-hidden rounded-xl bg-white text-left shadow-sm ring-1 transition hover:shadow ${
                     item.id === openId ? "ring-2 ring-stone-900" : "ring-stone-200"
@@ -329,6 +353,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                   <button
                     type="button"
                     data-item-id={item.id}
+                    data-source-url={item.sourceUrl || undefined}
                     onClick={() => openItemById(item.id)}
                     className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-stone-50 ${item.id === openId ? "bg-stone-100" : ""} ${
                       item.deletedAt ? "opacity-60" : ""

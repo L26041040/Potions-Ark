@@ -57,6 +57,19 @@ async function dismissEdit(page) {
   return true;
 }
 
+async function cardIds(page) {
+  return page.locator("[data-item-id]").evaluateAll((els) => els.map((e) => e.getAttribute("data-item-id")));
+}
+
+/** After adding, the user must stay in the warehouse with an empty, focused paste box. */
+async function assertStayedInWarehouse(page) {
+  assert.strictEqual(await page.getByRole("region", { name: "物件瀏覽" }).count(), 0, "新增後自動開啟了詳細面板");
+  assert.strictEqual(await page.getByRole("dialog").count(), 0, "新增後跳出了視窗");
+  assert.strictEqual(new URL(page.url()).searchParams.get("item"), null, "網址帶了 ?item=");
+  assert.strictEqual(await page.getByLabel("貼上網址", { exact: true }).inputValue(), "", "輸入框沒有清空");
+  assert.strictEqual(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "貼上網址", "焦點不在輸入框");
+}
+
 async function cardCount(page) {
   return page.locator("[data-item-id]").count();
 }
@@ -85,8 +98,8 @@ async function cardCount(page) {
     assert.strictEqual(await page.getByLabel("貼上網址", { exact: true }).isVisible(), true);
   });
 
-  await check("2 貼上 591 連結建立收藏（第一次會詢問暱稱）", async () => {
-    const before = await cardCount(page);
+  await check("2 貼上 591 連結建立收藏（第一次會詢問暱稱），收藏後留在倉庫", async () => {
+    const before = await cardIds(page);
     await paste(page, `看看這間 ${LISTING}?utm_source=line`);
     const nickField = page.getByLabel("暱稱", { exact: true });
     const asked = await nickField.waitFor({ timeout: 4000 }).then(() => true, () => false);
@@ -94,64 +107,76 @@ async function cardCount(page) {
       await nickField.fill(`測試員${stamp}`);
       await page.getByRole("dialog", { name: "你的暱稱" }).getByRole("button", { name: "確定", exact: true }).click();
     }
-    await page.getByRole("region", { name: "物件瀏覽" }).waitFor({ timeout: 20000 });
-    listingId = new URL(page.url()).searchParams.get("item");
-    assert.ok(listingId, "網址沒有帶 ?item=");
-    const existed = !asked;
-    if (existed) {
+    await page.getByText(/^已收藏|這個物件已經在倉庫裡/).waitFor({ timeout: 25000 });
+    const existed = await page.getByText("這個物件已經在倉庫裡").isVisible();
+    if (!asked) {
       // The listing was saved by an earlier run, so no nickname was needed yet.
       await page.getByRole("button", { name: "設定暱稱", exact: true }).click();
       await nickField.fill(`測試員${stamp}`);
       await page.getByRole("dialog", { name: "你的暱稱" }).getByRole("button", { name: "確定", exact: true }).click();
+      await page.getByLabel("貼上網址", { exact: true }).focus();
     }
-    const manual = existed ? false : await dismissEdit(page);
-    assert.strictEqual(await cardCount(page), before + (existed ? 0 : 1));
-    const title = await page.getByRole("region", { name: "物件瀏覽" }).locator("h2").innerText();
-    const how = existed ? "（先前已收藏，直接開啟既有物件）" : manual ? "（伺服器讀不到網頁，已跳出補填視窗）" : "（已自動帶入）";
-    return `名稱：${title.slice(0, 30)}${how}`;
+    await assertStayedInWarehouse(page);
+    listingId = await page.locator(`[data-source-url="${LISTING}"]`).first().getAttribute("data-item-id");
+    assert.ok(listingId, "倉庫裡找不到這個 591 物件");
+    assert.strictEqual((await cardIds(page)).length, before.length + (existed ? 0 : 1));
+    const name = await page.locator(`[data-item-id="${listingId}"]`).first().innerText();
+    const longest = name.split("\n").sort((x, y) => y.length - x.length)[0];
+    return `名稱：${longest.slice(0, 30)}${existed ? "（先前已收藏）" : ""}`;
   });
 
-  await check("3 右側顯示原始網頁（iframe）與開啟原始網頁按鈕", async () => {
-    const frame = page.getByRole("region", { name: "物件瀏覽" }).locator("iframe");
-    if ((await frame.count()) === 0) {
-      await page.getByRole("button", { name: "開啟原始網頁 ↗", exact: true }).first().waitFor();
-      return "伺服器判定不能嵌入，顯示開啟按鈕";
+  await check("3 點卡片才開啟詳細面板，右側顯示原始網頁與開啟按鈕", async () => {
+    await page.locator(`[data-item-id="${listingId}"]`).first().click();
+    const region = page.getByRole("region", { name: "物件瀏覽" });
+    await region.waitFor();
+    const frame = region.locator("iframe");
+    let detail = "伺服器判定不能嵌入，顯示開啟按鈕";
+    if ((await frame.count()) > 0) {
+      const src = await frame.getAttribute("src");
+      assert.ok(src && src.includes("591.com.tw") && !src.includes("utm_source"), `iframe src = ${src}`);
+      detail = `iframe src = ${src}`;
+    } else {
+      await region.getByRole("button", { name: "開啟原始網頁 ↗", exact: true }).first().waitFor();
     }
-    const src = await frame.getAttribute("src");
-    assert.ok(src && src.includes("591.com.tw"), `iframe src = ${src}`);
-    assert.ok(!src.includes("utm_source"), "追蹤參數沒有清掉");
-    assert.ok((await frame.getAttribute("sandbox")).includes("allow-scripts"));
-    return `iframe src = ${src}`;
+    await region.getByRole("button", { name: "關閉", exact: true }).click();
+    await region.waitFor({ state: "detached" });
+    return detail;
   });
 
-  await check("4 同一網址（加追蹤參數）再貼一次不會重複建立", async () => {
+  await check("4 同一網址（加追蹤參數）再貼一次：只提示已存在，不跳轉", async () => {
     const before = await cardCount(page);
     await paste(page, `${LISTING}?fbclid=abc`);
     await page.getByText("這個物件已經在倉庫裡").waitFor();
+    await assertStayedInWarehouse(page);
     assert.strictEqual(await cardCount(page), before);
   });
 
-  await check("5 內部位址：照樣建立物件，但伺服器不去讀它", async () => {
+  await check("5 連續收藏 3 個網址不需關閉任何面板；內部位址照樣建立但伺服器不去讀", async () => {
     const before = await cardCount(page);
-    await paste(page, `http://127.0.0.1:4599/secret-${stamp}`);
-    await page.getByRole("dialog", { name: "編輯物件" }).waitFor({ timeout: 15000 });
-    await page.getByRole("button", { name: "取消", exact: true }).click();
-    await paste(page, `http://localhost:4599/secret-${stamp}`);
-    await page.getByRole("dialog", { name: "編輯物件" }).waitFor({ timeout: 15000 });
-    await page.getByRole("button", { name: "取消", exact: true }).click();
-    assert.strictEqual(await cardCount(page), before + 2);
+    const urls = [`http://127.0.0.1:4599/seq-${stamp}-1`, `http://localhost:4599/seq-${stamp}-2`, `http://127.0.0.1:4599/seq-${stamp}-3`];
+    for (const [i, url] of urls.entries()) {
+      await page.getByLabel("貼上網址", { exact: true }).fill(url);
+      await page.keyboard.press("Enter");
+      await page.waitForFunction((n) => document.querySelectorAll("[data-item-id]").length === n, before + i + 1, { timeout: 20000 });
+      await page.getByText("已收藏，但讀不到網站資料，可稍後在物件中補填").first().waitFor();
+      await assertStayedInWarehouse(page);
+    }
     assert.strictEqual(internalHits, 0, `內部伺服器被讀了 ${internalHits} 次`);
-    return "內部伺服器被讀取 0 次";
+    return "3 筆都建立、全程留在倉庫，內部伺服器被讀取 0 次";
   });
 
-  await check("6 手動新增物件並出現 Google Maps 連結", async () => {
+  await check("6 手動新增後留在倉庫；點卡片可看到 Google Maps 連結", async () => {
     await page.getByRole("button", { name: "手動新增", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "手動新增物件" });
     await dialog.getByLabel("名稱（必填）", { exact: true }).fill(`手動測試物件${stamp}`);
     await dialog.getByLabel("地址（填了才會出現 Google Maps 連結）", { exact: true }).fill("台北市信義區市府路1號");
     await dialog.getByRole("button", { name: "新增", exact: true }).click();
+    await page.getByText("已新增").waitFor();
+    assert.strictEqual(await page.getByRole("region", { name: "物件瀏覽" }).count(), 0, "手動新增後自動開啟了面板");
+    const card = page.locator("[data-item-id]").filter({ hasText: `手動測試物件${stamp}` }).first();
+    manualId = await card.getAttribute("data-item-id");
+    await card.click();
     await page.getByRole("region", { name: "物件瀏覽" }).locator("h2").filter({ hasText: `手動測試物件${stamp}` }).waitFor();
-    manualId = new URL(page.url()).searchParams.get("item");
     const href = await page.getByRole("link", { name: "Google Maps" }).getAttribute("href");
     assert.ok(href.includes(encodeURIComponent("台北市信義區市府路1號")), href);
   });
