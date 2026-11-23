@@ -13,7 +13,7 @@ import { cleanUrl, extractAllUrls, extractUrl, nameFromText } from "@/lib/url";
 import { Cover, HealthBadge, readNick, StatusBadge, storeNickname, useIsDesktop, useNickname } from "./bits";
 import { BatchPanel, useBatchImport, type BatchState } from "./batch";
 import { DesktopDetail, MobileDetail, type DetailProps } from "./detail";
-import { FLAG_RING, FlagChips, KeyNumbers, PlaceFacts, TagChips } from "./facts";
+import { FLAG_PRESSED, FLAG_RING, FlagChips, KeyNumbers, PlaceFacts, TagChips } from "./facts";
 import { ItemDialog, NicknameDialog } from "./dialogs";
 
 type Filter = "active" | Status | "trash" | "gone";
@@ -521,7 +521,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                       aria-pressed={flag === e.label}
                       onClick={() => setFlagChoice((v) => (v === e.label ? null : e.label))}
                       className={`rounded-full px-2 py-0.5 text-xs ring-1 ${
-                        flag === e.label ? (e.level === "major" ? "bg-rose-600 text-white ring-rose-600" : "bg-orange-500 text-white ring-orange-500") : `bg-white ${FLAG_RING[e.level]}`
+                        flag === e.label ? FLAG_PRESSED[e.level] : `bg-white ${FLAG_RING[e.level]}`
                       }`}
                     >
                       {e.label}
@@ -595,8 +595,8 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                     <Cover item={item} className="h-12 w-16 shrink-0 rounded-md" />
                     <div className="min-w-0 flex-1 space-y-0.5">
                       <div className="truncate text-sm font-medium" data-name>{item.name}</div>
+                      <FlagChips item={item} />
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                        <FlagChips item={item} />
                         <KeyNumbers item={item} />
                         <PlaceFacts item={item} />
                         <TagChips item={item} />

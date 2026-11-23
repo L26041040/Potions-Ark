@@ -54,8 +54,20 @@ export function flagCatalog(items: Item[]): CatalogEntry[] {
   return [...PRESET_FLAGS.map((p) => ({ ...p, preset: true })), ...custom];
 }
 
-/** Gives every flag its site-wide level (applied whenever the data is read). */
+/**
+ * Gives every flag its site-wide level (applied whenever the data is read).
+ * Names are normalized first and an item keeps one flag per name (the earliest).
+ */
 export function canonicalizeFlags(items: Item[]): Item[] {
+  for (const item of items) {
+    const kept = new Map<string, Flag>();
+    for (const flag of item.flags) {
+      const label = normalizeLabel(flag.label);
+      const seen = kept.get(label);
+      if (label && (!seen || flag.at < seen.at)) kept.set(label, { ...flag, label });
+    }
+    item.flags = [...kept.values()];
+  }
   const custom = customLevels(items);
   for (const item of items) {
     for (const flag of item.flags) {
@@ -90,7 +102,8 @@ export function setFlag(items: Item[], item: Item, rawLabel: string, on: boolean
     item.flags = item.flags.filter((f) => f !== current);
     return { ok: true, changed: true };
   }
-  if (current) return { ok: true, changed: false, level: current.level };
+  // Already on this item (for example someone else just added it): nothing to save.
+  if (current) return { ok: true, changed: false, level: current.level, created: false };
   if (item.flags.length >= MAX_FLAGS_PER_ITEM) return { ok: false, error: `每個物件最多 ${MAX_FLAGS_PER_ITEM} 個評價標籤` };
 
   const preset = PRESET_FLAGS.find((p) => p.label === label);

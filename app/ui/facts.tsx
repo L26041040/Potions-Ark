@@ -52,6 +52,7 @@ export function PlaceFacts({ item }: { item: Item }) {
 }
 
 export const FLAG_RING: Record<FlagLevel, string> = { major: "text-rose-700 ring-rose-500", minor: "text-orange-700 ring-orange-400" };
+export const FLAG_PRESSED: Record<FlagLevel, string> = { major: "bg-rose-600 text-white ring-rose-600", minor: "bg-orange-500 text-white ring-orange-500" };
 
 /** 股東評價 on cards and list rows: 重大 first, two at most, the rest as +N, on one line. */
 export function FlagChips({ item }: { item: Item }) {

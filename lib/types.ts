@@ -146,7 +146,15 @@ export function normalizeItem(raw: Item): Item {
     tagOverrides: raw.tagOverrides && typeof raw.tagOverrides === "object" ? raw.tagOverrides : {},
     autoTags: raw.autoTags && typeof raw.autoTags === "object" ? raw.autoTags : {},
     flags: Array.isArray(raw.flags)
-      ? raw.flags.filter((f): f is Flag => Boolean(f) && typeof f.label === "string" && (f.level === "major" || f.level === "minor"))
+      ? raw.flags
+          .filter((f): f is Flag => Boolean(f) && typeof f.label === "string" && (f.level === "major" || f.level === "minor"))
+          .map((f) => ({
+            label: f.label,
+            level: f.level,
+            by: typeof f.by === "string" ? f.by : "",
+            // A missing or unreadable time is kept empty rather than breaking the page.
+            at: typeof f.at === "string" && Number.isFinite(Date.parse(f.at)) ? f.at : "",
+          }))
       : [],
     photos: Array.isArray(raw.photos) ? raw.photos : [],
     manual: Array.isArray(raw.manual) ? raw.manual.filter((f) => (MANUAL_FIELDS as string[]).includes(f)) : [],

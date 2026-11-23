@@ -7,7 +7,7 @@ import { FLAG_LEVEL_LABEL, MAX_LABEL_LENGTH, normalizeLabel, sortFlags, type Cat
 import { tagsOf, type TagView } from "@/lib/tags";
 import { STATUS_LABEL, TAG_KEYS, type Doc, type Entry, type FlagLevel, type Item, type Status, type TagKey } from "@/lib/types";
 import { NOT_GIVEN } from "@/lib/units";
-import { factTexts, FLAG_RING } from "./facts";
+import { factTexts, FLAG_PRESSED, FLAG_RING } from "./facts";
 import { hostOf, mapsUrl } from "@/lib/url";
 import { formatTime, openSource, StatusButtons } from "./bits";
 import { PhotoViewer } from "./photos";
@@ -188,8 +188,6 @@ function Facts({ item }: { item: Item }) {
   );
 }
 
-const FLAG_PRESSED: Record<FlagLevel, string> = { major: "bg-rose-600 text-white ring-rose-600", minor: "bg-orange-500 text-white ring-orange-500" };
-
 /**
  * 股東評價: one tap selects, another unselects; every tap saves at once. Two
  * rows (重大, 一般), then 「＋自訂」. Who marked each flag and when is listed below.
@@ -244,6 +242,7 @@ function Flags({ item, catalog, onFlag }: { item: Item; catalog: CatalogEntry[];
         <button
           type="button"
           onClick={() => setAdding(true)}
+          disabled={saving}
           className="rounded-full border border-dashed border-stone-400 bg-white px-2.5 py-1 text-sm text-stone-600 hover:bg-stone-50"
         >
           ＋自訂
@@ -294,7 +293,7 @@ function Flags({ item, catalog, onFlag }: { item: Item; catalog: CatalogEntry[];
         <ul className="space-y-0.5 text-xs text-stone-500" aria-label="評價紀錄">
           {sortFlags(item.flags).map((f) => (
             <li key={f.label} data-flag-record={f.label}>
-              <span className={f.level === "major" ? "text-rose-700" : "text-orange-700"}>{f.label}</span>｜{f.by || "匿名"}｜{formatTime(f.at)}
+              <span className={f.level === "major" ? "text-rose-700" : "text-orange-700"}>{f.label}</span>｜{f.by || "匿名"}｜{f.at ? formatTime(f.at) : "時間不明"}
             </li>
           ))}
         </ul>

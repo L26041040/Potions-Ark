@@ -54,7 +54,14 @@ const blobBackend: Backend = {
   },
 };
 
-const LOCAL_FILE = path.join(process.cwd(), ".data", "db.json");
+/** Local data folder; tests point POTIONS_DATA_DIR at a temporary folder. */
+function localDir(): string {
+  return process.env.POTIONS_DATA_DIR || path.join(process.cwd(), ".data");
+}
+
+function localFile(): string {
+  return path.join(localDir(), "db.json");
+}
 
 // The local file stands in for Blob's conditional write: writes take turns
 // (one server process) and replace the file in one step, so two saves at the
@@ -64,7 +71,7 @@ let localTurn: Promise<unknown> = Promise.resolve();
 const localBackend: Backend = {
   async read() {
     try {
-      const text = await readFile(LOCAL_FILE, "utf8");
+      const text = await readFile(localFile(), "utf8");
       return { doc: parse(text), etag: hash(text) };
     } catch {
       return { doc: emptyDoc(), etag: null };
@@ -74,10 +81,10 @@ const localBackend: Backend = {
     const turn = localTurn.then(async () => {
       const current = await this.read();
       if (current.etag !== etag) return false;
-      await mkdir(path.dirname(LOCAL_FILE), { recursive: true });
-      const temp = `${LOCAL_FILE}.${process.pid}.${Date.now()}.tmp`;
+      await mkdir(localDir(), { recursive: true });
+      const temp = `${localFile()}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
       await writeFile(temp, JSON.stringify(doc));
-      await rename(temp, LOCAL_FILE);
+      await rename(temp, localFile());
       return true;
     });
     localTurn = turn.catch(() => undefined);
@@ -129,11 +136,11 @@ export async function backupDoc(name: string): Promise<BackupInfo> {
     await put(pathname, text, { access: "private", contentType: "application/json", addRandomSuffix: false, allowOverwrite: false });
     return count(text, true);
   }
-  const file = path.join(process.cwd(), ".data", "backups", `${name}.json`);
+  const file = path.join(localDir(), "backups", `${name}.json`);
   try {
     return count(await readFile(file, "utf8"), false);
   } catch {
-    const text = await readFile(LOCAL_FILE, "utf8").catch(() => JSON.stringify(emptyDoc()));
+    const text = await readFile(localFile(), "utf8").catch(() => JSON.stringify(emptyDoc()));
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, text, { flag: "wx" });
     return count(text, true);

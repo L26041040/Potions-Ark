@@ -32,6 +32,12 @@ describe("setFlag", () => {
     expect(a.flags).toEqual([]);
   });
 
+  it("tells the custom form the name is already on this item instead of adding it twice", () => {
+    const a = item("a", [f("沒招牌", "major")]);
+    expect(setFlag([a], a, "沒招牌", true, "minor", "小美", NOW)).toMatchObject({ ok: true, changed: false, created: false, level: "major" });
+    expect(a.flags).toHaveLength(1);
+  });
+
   it("sends the wanted state, so repeating it changes nothing and the last request wins", () => {
     const a = item("a", [f("太小", "major")]);
     expect(setFlag([a], a, "太小", true, "major", "阿明", NOW)).toMatchObject({ ok: true, changed: false });
@@ -120,6 +126,11 @@ describe("canonicalizeFlags", () => {
     ]);
     expect(items[0].flags.map((x) => x.level)).toEqual(["minor", "major"]);
     expect(items[1].flags[0].level).toBe("major");
+  });
+
+  it("normalizes names and keeps one flag per name on an item", () => {
+    const [a] = canonicalizeFlags([item("a", [f(" 地下室 ", "major", "2026-11-23T03:00:00.000Z"), f("地下室", "minor", "2026-11-23T01:00:00.000Z"), f("門口  窄", "minor")])]);
+    expect(a.flags).toEqual([f("地下室", "minor", "2026-11-23T01:00:00.000Z"), f("門口 窄", "minor")]);
   });
 });
 

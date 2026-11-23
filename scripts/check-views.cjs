@@ -13,11 +13,6 @@ const fs = require("fs");
   const out = process.argv[3];
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  if (process.env.SHARE_URL) {
-    const p0 = await ctx.newPage();
-    await p0.goto(process.env.SHARE_URL);
-    await p0.close();
-  }
   let blockedWrites = 0;
   await ctx.route("**/*", (r) => {
     const u = new URL(r.request().url());
@@ -28,6 +23,11 @@ const fs = require("fs");
     if (u.host === new URL(BASE).host || /^img\d*\.591\.com\.tw$/.test(u.host)) return r.continue();
     return r.fulfill({ status: 404, body: "" });
   });
+  if (process.env.SHARE_URL) {
+    const p0 = await ctx.newPage();
+    await p0.goto(process.env.SHARE_URL);
+    await p0.close();
+  }
   const page = await ctx.newPage();
   await page.goto(BASE);
   const filters = page.getByRole("group", { name: "狀態篩選" });

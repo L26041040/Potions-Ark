@@ -10,6 +10,11 @@ const http = require("http");
 const assert = require("assert");
 
 const BASE = (process.argv[2] || "http://localhost:3000").replace(/\/$/, "");
+// The walkthrough saves data. It must never run against the shareholders' live site.
+if (/(^|\/\/)potions-ark\.vercel\.app$/.test(BASE) && process.env.ALLOW_PRODUCTION !== "1") {
+  console.error("Refusing to run the walkthrough against production: it writes test data. Use a local server or a preview deployment.");
+  process.exit(2);
+}
 // REAL_591=1 when the server can read 591 (on Vercel): real photos are then required.
 const REAL = process.env.REAL_591 === "1";
 // Thirty uploads to one item cost Blob operations, so the cap test runs only where asked.
