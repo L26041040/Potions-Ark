@@ -23,6 +23,8 @@ function step(name, ok, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 }
 
+let currentPage = null;
+
 async function check(name, fn) {
   try {
     const detail = await fn();
@@ -30,6 +32,7 @@ async function check(name, fn) {
   } catch (e) {
     const where = (e.stack || "").split("\n").find((l) => l.includes("smoke.cjs")) || "";
     step(name, false, `${e.message.split("\n")[0]} ${where.trim()}`);
+    if (process.env.FAIL_SHOTS && currentPage) await currentPage.screenshot({ path: `${process.env.FAIL_SHOTS}/fail-${name.split(" ")[0]}.png` }).catch(() => {});
   }
 }
 
@@ -114,6 +117,7 @@ async function showFilter(page, label) {
   await stubExternal(desktop);
   desktop.setDefaultTimeout(20000);
   const page = await desktop.newPage();
+  currentPage = page;
   page.on("dialog", (d) => d.accept());
   let listingId = null;
   let manualId = null;
@@ -646,7 +650,12 @@ async function showFilter(page, label) {
     await food(r2).getByText(/股東填寫/).waitFor();
     await food(r2).getByRole("button", { name: "自動", exact: true }).click();
     await r2.locator('[data-tag="food"][data-state="yes"]').waitFor();
+    // Closing an item opened before a reload keeps the warehouse view (filter, search) as it is.
+    await search.fill(tag);
     await r2.getByRole("button", { name: "關閉", exact: true }).click();
+    await page.waitForTimeout(1500);
+    assert.strictEqual(await page.getByRole("group", { name: "狀態篩選" }).locator('button[aria-pressed="true"]').innerText().then((t) => t.startsWith("全部")), true, "關閉後篩選被重置");
+    assert.strictEqual(await search.inputValue(), tag, "關閉後搜尋被清空");
     await page.locator(`[data-item-id="${ids.B}"]`).click();
     await r2.locator('[data-tag="food"][data-state="no"]').waitFor();
     await r2.getByRole("button", { name: "關閉", exact: true }).click();

@@ -35,6 +35,13 @@ function matchesFilter(item: Item, filter: Filter): boolean {
 }
 
 
+/** Identifies this page load in history entries, so 「關閉」 never goes back past a reload. */
+const PAGE_LOAD = Math.random().toString(36).slice(2);
+
+function itemState() {
+  return { page: PAGE_LOAD };
+}
+
 function itemUrl(id: string | null): string {
   return id ? `${window.location.pathname}?item=${encodeURIComponent(id)}` : window.location.pathname;
 }
@@ -122,18 +129,20 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   function openItemById(id: string) {
     setLastOpened(id);
     if (openId) {
-      window.history.replaceState({ potions: window.history.state?.potions ?? null }, "", itemUrl(id));
+      window.history.replaceState({ ...itemState(), potions: window.history.state?.potions ?? null }, "", itemUrl(id));
     } else {
-      window.history.pushState({ potions: "item" }, "", itemUrl(id));
+      window.history.pushState({ ...itemState(), potions: "item" }, "", itemUrl(id));
     }
     setOpenId(id);
   }
 
   function close() {
-    if (window.history.state?.potions === "item") {
+    // Back only within this page load: after a reload the previous entry belongs to the
+    // old page, and going back to it would navigate and reset the warehouse view.
+    if (window.history.state?.potions === "item" && window.history.state?.page === PAGE_LOAD) {
       window.history.back();
     } else {
-      window.history.replaceState({ potions: null }, "", itemUrl(null));
+      window.history.replaceState({ ...itemState(), potions: null }, "", itemUrl(null));
       setOpenId(null);
     }
   }
