@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { addComment, addManual, addUrls, deleteUpload, refetchItem, saveNote, setDeleted, setStatus, setTag, updateItem } from "@/app/actions";
+import { addComment, addManual, addUrls, deleteUpload, refetchItem, saveNote, setDeleted, setItemFlag, setStatus, setTag, updateItem } from "@/app/actions";
+import { flagCatalog } from "@/lib/flags";
 import { isDueForCheck } from "@/lib/health";
 import { findSameListing } from "@/lib/merge";
 import { matchesQuery } from "@/lib/search";
@@ -12,7 +13,7 @@ import { cleanUrl, extractAllUrls, extractUrl, nameFromText } from "@/lib/url";
 import { Cover, HealthBadge, readNick, StatusBadge, storeNickname, useIsDesktop, useNickname } from "./bits";
 import { BatchPanel, useBatchImport, type BatchState } from "./batch";
 import { DesktopDetail, MobileDetail, type DetailProps } from "./detail";
-import { KeyNumbers, PlaceFacts, TagChips } from "./facts";
+import { FLAG_RING, FlagChips, KeyNumbers, PlaceFacts, TagChips } from "./facts";
 import { ItemDialog, NicknameDialog } from "./dialogs";
 
 type Filter = "active" | Status | "trash" | "gone";
@@ -59,6 +60,8 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   const [maxRentText, setMaxRentText] = useState("");
   const [minAreaText, setMinAreaText] = useState("");
   const [groundFloor, setGroundFloor] = useState(false);
+  const [hideMajor, setHideMajor] = useState(false);
+  const [flagChoice, setFlagChoice] = useState<string | null>(null);
   const [paste, setPaste] = useState("");
   const [pasting, setPasting] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -101,8 +104,18 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
   const q = query.trim().toLowerCase();
   // Unreadable entries are ignored rather than hiding everything.
   const usable = (n: number | null) => (n === null || Number.isNaN(n) ? null : n);
-  const quick: QuickFilter = { maxRent: usable(fromWanInput(maxRentText)), minArea: usable(parseAmount(minAreaText, "坪")), groundFloor };
-  const quickCount = (quick.maxRent !== null ? 1 : 0) + (quick.minArea !== null ? 1 : 0) + (quick.groundFloor ? 1 : 0);
+  // 股東評價 labels to choose from: the presets plus custom labels some item uses.
+  const catalog = flagCatalog(doc.items);
+  // A chosen label that no item uses any more no longer filters.
+  const flag = flagChoice !== null && catalog.some((e) => e.label === flagChoice) ? flagChoice : null;
+  const quick: QuickFilter = {
+    maxRent: usable(fromWanInput(maxRentText)),
+    minArea: usable(parseAmount(minAreaText, "坪")),
+    groundFloor,
+    hideMajor,
+    flag,
+  };
+  const quickCount = [quick.maxRent !== null, quick.minArea !== null, quick.groundFloor, quick.hideMajor, quick.flag !== null].filter(Boolean).length;
   const visible = sortItems(
     doc.items.filter((i) => i.id === openId || (matchesFilter(i, filter) && matchesQuery(i, q) && matchesQuick(i, quick))),
     sort,
@@ -111,6 +124,8 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
     setMaxRentText("");
     setMinAreaText("");
     setGroundFloor(false);
+    setHideMajor(false);
+    setFlagChoice(null);
   }
   const openItem = openId ? doc.items.find((i) => i.id === openId) ?? null : null;
   const index = openItem ? visible.findIndex((i) => i.id === openItem.id) : -1;
@@ -312,6 +327,13 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
         onClose: close,
         onStatus: (status) => openItem && run((nick) => setStatus(openItem.id, status, nick)),
         onTag: (key, value) => openItem && run((nick) => setTag(openItem.id, key, value, nick)),
+        flagCatalog: catalog,
+        onFlag: async (label, on, level, fromForm) => {
+          if (!openItem) return false;
+          const res = await run((nick) => setItemFlag(openItem.id, label, on, level, nick, fromForm));
+          if (res?.ok && res.notice) setToast({ text: res.notice });
+          return Boolean(res?.ok);
+        },
         onEdit: () => openItem && setDialog({ kind: "edit", id: openItem.id }),
         onDelete: () => {
           if (openItem && window.confirm(`確定要刪除「${openItem.name}」嗎？刪除後可在回收桶還原。`)) {
@@ -486,6 +508,26 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                   <input type="checkbox" checked={groundFloor} onChange={(e) => setGroundFloor(e.target.checked)} className="h-4 w-4" />
                   必須包含一樓
                 </label>
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={hideMajor} onChange={(e) => setHideMajor(e.target.checked)} className="h-4 w-4" />
+                  隱藏有重大缺點
+                </label>
+                <div role="group" aria-label="只看有此標籤" className="flex w-full flex-wrap items-center gap-1">
+                  <span className="mr-1 text-stone-600">只看有此標籤</span>
+                  {catalog.map((e) => (
+                    <button
+                      key={e.label}
+                      type="button"
+                      aria-pressed={flag === e.label}
+                      onClick={() => setFlagChoice((v) => (v === e.label ? null : e.label))}
+                      className={`rounded-full px-2 py-0.5 text-xs ring-1 ${
+                        flag === e.label ? (e.level === "major" ? "bg-rose-600 text-white ring-rose-600" : "bg-orange-500 text-white ring-orange-500") : `bg-white ${FLAG_RING[e.level]}`
+                      }`}
+                    >
+                      {e.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -528,6 +570,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                     <HealthBadge item={item} className="absolute right-1.5 top-1.5 shadow-sm" />
                   </div>
                   <div className="w-full space-y-1 p-2">
+                    <FlagChips item={item} />
                     <div className="line-clamp-2 text-sm font-medium leading-snug" data-name>{item.name}</div>
                     <KeyNumbers item={item} big />
                     <PlaceFacts item={item} />
@@ -553,6 +596,7 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
                     <div className="min-w-0 flex-1 space-y-0.5">
                       <div className="truncate text-sm font-medium" data-name>{item.name}</div>
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                        <FlagChips item={item} />
                         <KeyNumbers item={item} />
                         <PlaceFacts item={item} />
                         <TagChips item={item} />

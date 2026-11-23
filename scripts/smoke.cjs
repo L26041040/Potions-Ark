@@ -727,8 +727,177 @@ async function showFilter(page, label) {
     await m.getByRole("button", { name: "編輯", exact: true }).click();
     await m.getByRole("dialog", { name: "編輯物件" }).getByLabel("月租金（萬元）", { exact: true }).waitFor();
     await m.getByRole("dialog", { name: "編輯物件" }).getByRole("button", { name: "取消", exact: true }).click();
+    // 股東評價 can be marked and unmarked on a phone.
+    const flaw = m.getByRole("group", { name: "一般缺點" }).getByRole("button", { name: "屋況差", exact: true });
+    await flaw.click();
+    await m.waitForFunction(() => [...document.querySelectorAll('[aria-label="一般缺點"] button')].some((b) => b.textContent === "屋況差" && b.getAttribute("aria-pressed") === "true" && !b.disabled));
+    await flaw.click();
+    await m.waitForFunction(() => [...document.querySelectorAll('[aria-label="一般缺點"] button')].some((b) => b.textContent === "屋況差" && b.getAttribute("aria-pressed") === "false" && !b.disabled));
+    await m.getByRole("button", { name: "＋自訂", exact: true }).click();
+    await m.getByLabel("自訂標籤名稱", { exact: true }).waitFor();
     await mobile.close();
-    return "iPhone 13：無橫向溢出、排序與快速篩選可用並可清除、列表與詳細面板正常";
+    return "iPhone 13：無橫向溢出、排序與快速篩選可用並可清除、列表與詳細面板正常、可標記與取消股東評價、可開自訂表單";
+  });
+
+  await check("27 股東評價：一鍵選取／取消／多選並立即儲存、紅色優先最多兩個加 +N、篩選、自訂標籤共用與去重、無人使用即消失", async () => {
+    const tag = `比較${stamp}`;
+    const flagButton = (root, level, label) => root.getByRole("group", { name: `${level}缺點` }).getByRole("button", { name: label, exact: true });
+    const settle = (label, pressed) =>
+      page.waitForFunction(
+        ([l, p]) => [...document.querySelectorAll('[aria-label="股東評價"] [data-flag-button]')].some((b) => b.textContent === l && b.getAttribute("aria-pressed") === p && !b.disabled),
+        [label, String(pressed)],
+      );
+    const flagsOf = (sel) => page.locator(sel).first().evaluate((el) => {
+      const box = el.querySelector("[data-flags]");
+      return box ? { all: box.getAttribute("data-flags"), shown: [...box.querySelectorAll("[data-flag]")].map((c) => `${c.textContent}:${c.dataset.flag}`) } : { all: "", shown: [] };
+    });
+    await showFilter(page, "全部");
+    const search = page.getByLabel("搜尋", { exact: true });
+    await search.fill(tag);
+    await page.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 3);
+    const idOf = async (k) => page.locator("[data-item-id]").filter({ hasText: `${tag}-${k}` }).first().getAttribute("data-item-id");
+    const A = await idOf("A");
+    const B = await idOf("B");
+    await page.locator(`[data-item-id="${A}"]`).click();
+    const region = page.getByRole("region", { name: "物件瀏覽" });
+    const statusBefore = await region.locator('[aria-pressed="true"]').filter({ hasText: /^(未討論|待確認|確定考慮|不考慮)$/ }).innerText();
+    const commentsBefore = await page.getByText(/^留言（\d+）$/).first().innerText();
+    for (const [level, label] of [["重大", "太小"], ["一般", "地下室"], ["一般", "租金太高"]]) {
+      await flagButton(region, level, label).click();
+      await settle(label, true);
+    }
+    await region.getByLabel("評價紀錄").getByText(`太小｜測試員${stamp}`).waitFor();
+    assert.deepStrictEqual(await flagsOf(`[data-item-id="${A}"]`), { all: "太小、地下室、租金太高", shown: ["太小:major", "地下室:minor", "+1:more"] });
+    // Marking never changes the status or adds a comment.
+    assert.strictEqual(await region.locator('[aria-pressed="true"]').filter({ hasText: /^(未討論|待確認|確定考慮|不考慮)$/ }).innerText(), statusBefore);
+    assert.strictEqual(await page.getByText(/^留言（\d+）$/).first().innerText(), commentsBefore, "貼標新增了留言或紀錄");
+    await region.getByRole("button", { name: "關閉", exact: true }).click();
+    await page.getByRole("button", { name: "列表", exact: true }).click();
+    assert.deepStrictEqual(await flagsOf(`ul [data-item-id="${A}"]`), { all: "太小、地下室、租金太高", shown: ["太小:major", "地下室:minor", "+1:more"] });
+    await page.getByRole("button", { name: "圖庫", exact: true }).click();
+    // Survives a reload; unselecting one updates every view.
+    await page.reload();
+    await showFilter(page, "全部");
+    await search.fill(tag);
+    await page.locator(`[data-item-id="${A}"] [data-flags]`).waitFor();
+    await page.locator(`[data-item-id="${A}"]`).click();
+    await flagButton(region, "一般", "地下室").click();
+    await settle("地下室", false);
+    assert.deepStrictEqual(await flagsOf(`[data-item-id="${A}"]`), { all: "太小、租金太高", shown: ["太小:major", "租金太高:minor"] });
+    await region.getByRole("button", { name: "關閉", exact: true }).click();
+    // Filters: hide 重大 flaws, then only one label; cleared together with the other conditions.
+    await page.getByRole("button", { name: /^快速篩選/ }).click();
+    const quick = page.getByRole("group", { name: "快速篩選" });
+    await quick.getByLabel("隱藏有重大缺點").check();
+    await page.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 2);
+    assert.strictEqual(await page.locator(`[data-item-id="${A}"]`).count(), 0);
+    await quick.getByLabel("隱藏有重大缺點").uncheck();
+    await quick.getByRole("group", { name: "只看有此標籤" }).getByRole("button", { name: "租金太高", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 1);
+    await page.getByRole("button", { name: "列表", exact: true }).click();
+    assert.strictEqual(await page.locator("ul [data-item-id]").count(), 1);
+    await page.getByRole("button", { name: "圖庫", exact: true }).click();
+    await quick.getByLabel("隱藏有重大缺點").check();
+    await page.getByRole("button", { name: "清除條件", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 3);
+    assert.strictEqual(await quick.getByLabel("隱藏有重大缺點").isChecked(), false);
+    await page.getByRole("button", { name: /^快速篩選/ }).click();
+    // Custom label: created on A at 重大, offered on B, the same name at 一般 on B keeps 重大.
+    const custom = `遠${stamp.slice(-4)}`;
+    await page.locator(`[data-item-id="${A}"]`).click();
+    await region.getByRole("button", { name: "＋自訂", exact: true }).click();
+    await region.getByLabel("自訂標籤名稱", { exact: true }).fill(custom);
+    await region.getByRole("radio", { name: "重大" }).click();
+    await region.getByRole("button", { name: "建立", exact: true }).click();
+    await settle(custom, true);
+    assert.strictEqual(await flagButton(region, "重大", custom).getAttribute("aria-pressed"), "true");
+    await region.getByRole("button", { name: "關閉", exact: true }).click();
+    await page.locator(`[data-item-id="${B}"]`).click();
+    assert.strictEqual(await flagButton(region, "重大", custom).getAttribute("aria-pressed"), "false", "自訂標籤沒有出現在其他物件");
+    await region.getByRole("button", { name: "＋自訂", exact: true }).click();
+    await region.getByLabel("自訂標籤名稱", { exact: true }).fill(` ${custom} `);
+    await region.getByRole("radio", { name: "一般" }).click();
+    await region.getByRole("button", { name: "建立", exact: true }).click();
+    await page.getByText("已有此標籤（重大），已直接套用").waitFor();
+    await settle(custom, true);
+    assert.strictEqual(await region.getByRole("group", { name: "一般缺點" }).getByRole("button", { name: custom, exact: true }).count(), 0, "同名標籤出現兩種級別");
+    // Unused custom labels disappear.
+    await flagButton(region, "重大", custom).click();
+    await settle(custom, false);
+    await region.getByRole("button", { name: "關閉", exact: true }).click();
+    await page.locator(`[data-item-id="${A}"]`).click();
+    await flagButton(region, "重大", custom).click();
+    await page.waitForFunction((l) => ![...document.querySelectorAll('[aria-label="股東評價"] [data-flag-button]')].some((b) => b.textContent === l), custom);
+    await region.getByRole("button", { name: "關閉", exact: true }).click();
+    await page.getByRole("button", { name: /^快速篩選/ }).click();
+    assert.strictEqual(await quick.getByRole("group", { name: "只看有此標籤" }).getByRole("button", { name: custom, exact: true }).count(), 0);
+    await page.getByRole("button", { name: /^快速篩選/ }).click();
+    await search.fill("");
+    return "選取三個→卡片與列表「太小、地下室、+1」、重新整理仍在、取消一個即時更新、狀態與留言不變；隱藏重大／只看標籤／清除條件正確；自訂標籤共用、同名不同級別沿用重大、無人使用即消失";
+  });
+
+  await check("28 多人同時操作：同一物件不同標籤都保留；同名不同級別同時建立，全站只有一個級別", async () => {
+    const tag = `比較${stamp}`;
+    const open = async (nickname) => {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      await stubExternal(ctx);
+      await ctx.addInitScript((n) => localStorage.setItem("potions-nickname", n), nickname);
+      const p = await ctx.newPage();
+      p.setDefaultTimeout(30000);
+      return { ctx, p };
+    };
+    await showFilter(page, "全部");
+    await page.getByLabel("搜尋", { exact: true }).fill(tag);
+    await page.waitForFunction(() => document.querySelectorAll("[data-item-id]").length === 3);
+    const idOf = async (k) => page.locator("[data-item-id]").filter({ hasText: `${tag}-${k}` }).first().getAttribute("data-item-id");
+    const [A, C] = [await idOf("A"), await idOf("C")];
+    const x = await open(`甲${stamp}`);
+    const y = await open(`乙${stamp}`);
+    await Promise.all([x.p.goto(`${BASE}/?item=${C}`), y.p.goto(`${BASE}/?item=${C}`)]);
+    const btn = (p, level, label) => p.getByRole("region", { name: "物件瀏覽" }).getByRole("group", { name: `${level}缺點` }).getByRole("button", { name: label, exact: true });
+    await Promise.all([btn(x.p, "重大", "挑高太低").waitFor(), btn(y.p, "一般", "位置偏").waitFor()]);
+    await Promise.all([btn(x.p, "重大", "挑高太低").click(), btn(y.p, "一般", "位置偏").click()]);
+    const pressedIn = (p, label) => p.waitForFunction((l) => [...document.querySelectorAll("[data-flag-button]")].some((b) => b.textContent === l && b.getAttribute("aria-pressed") === "true" && !b.disabled), label);
+    await Promise.all([pressedIn(x.p, "挑高太低"), pressedIn(y.p, "位置偏")]);
+    await page.goto(`${BASE}/?item=${C}`);
+    const records = page.getByRole("region", { name: "物件瀏覽" }).getByLabel("評價紀錄");
+    await records.getByText(`挑高太低｜甲${stamp}`).waitFor();
+    await records.getByText(`位置偏｜乙${stamp}`).waitFor();
+    // Same new name, different levels, at the same time on two items.
+    const name = `併${stamp.slice(-4)}`;
+    await Promise.all([x.p.goto(`${BASE}/?item=${A}`), y.p.goto(`${BASE}/?item=${C}`)]);
+    for (const [who, level] of [[x, "重大"], [y, "一般"]]) {
+      const r = who.p.getByRole("region", { name: "物件瀏覽" });
+      await r.getByRole("button", { name: "＋自訂", exact: true }).click();
+      await r.getByLabel("自訂標籤名稱", { exact: true }).fill(name);
+      await r.getByRole("radio", { name: level }).click();
+    }
+    await Promise.all([x, y].map((who) => who.p.getByRole("region", { name: "物件瀏覽" }).getByRole("button", { name: "建立", exact: true }).click()));
+    await Promise.all([pressedIn(x.p, name), pressedIn(y.p, name)]);
+    const notices = (await Promise.all([x, y].map((who) => who.p.getByText(/已有此標籤（(重大|一般)），已直接套用/).count()))).reduce((a, b) => a + b, 0);
+    await page.goto(`${BASE}/?item=${A}`);
+    const levels = await page.getByRole("region", { name: "物件瀏覽" }).locator("[data-flag-button]").evaluateAll((els, l) => els.filter((b) => b.textContent === l).map((b) => b.dataset.flagButton), name);
+    assert.strictEqual(levels.length, 1, `同名標籤出現 ${levels.length} 個按鈕`);
+    let raw = "畫面";
+    if (process.env.LOCAL_DATA) {
+      // The stored data itself, not just the display, holds one level.
+      const data = JSON.parse(require("fs").readFileSync(process.env.LOCAL_DATA, "utf8"));
+      const stored = new Set(data.items.flatMap((i) => i.flags || []).filter((f) => f.label === name).map((f) => f.level));
+      assert.strictEqual(stored.size, 1, `儲存的資料有 ${stored.size} 種級別`);
+      raw = "儲存資料與畫面";
+    }
+    assert.strictEqual(notices, 1, `「已有此標籤」提示出現 ${notices} 次`);
+    // Clean up the shared label on both items.
+    for (const [who, id] of [[x, A], [y, C]]) {
+      await who.p.goto(`${BASE}/?item=${id}`);
+      const b = who.p.getByRole("region", { name: "物件瀏覽" }).locator("[data-flag-button]").filter({ hasText: name });
+      await b.click();
+      await who.p.waitForFunction((l) => [...document.querySelectorAll("[data-flag-button]")].some((e) => e.textContent === l && e.getAttribute("aria-pressed") === "false" && !e.disabled) || ![...document.querySelectorAll("[data-flag-button]")].some((e) => e.textContent === l), name);
+    }
+    await x.ctx.close();
+    await y.ctx.close();
+    await page.goto(BASE);
+    return `兩人同時標不同標籤都保留；同名同時建立後全站只有「${levels[0] === "major" ? "重大" : "一般"}」一種級別（${raw}），提示 1 次`;
   });
 
   if (REAL) {

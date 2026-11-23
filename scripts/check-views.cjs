@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- the preinstalled Playwright can only be loaded with require */
 // Reads every item's rent, area, floor, 商圈／區域 and tags from the gallery
 // cards, the list rows and the detail panel, and reports any disagreement.
-// Read-only: it only opens pages. Browser requests to other sites are refused
-// except 591's photo hosts.
+// Read-only: it only opens pages, and the background link check a visit would
+// start is blocked, so nothing is written. Browser requests to other sites are
+// refused except 591's photo hosts.
 // Usage: node scripts/check-views.cjs <base-url> [out.json]   (SHARE_URL for a protected preview)
 const { chromium } = require("playwright");
 const fs = require("fs");
@@ -17,8 +18,13 @@ const fs = require("fs");
     await p0.goto(process.env.SHARE_URL);
     await p0.close();
   }
+  let blockedWrites = 0;
   await ctx.route("**/*", (r) => {
     const u = new URL(r.request().url());
+    if (u.pathname === "/api/recheck") {
+      blockedWrites++;
+      return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: false, error: "read-only check" }) });
+    }
     if (u.host === new URL(BASE).host || /^img\d*\.591\.com\.tw$/.test(u.host)) return r.continue();
     return r.fulfill({ status: 404, body: "" });
   });
@@ -31,6 +37,7 @@ const fs = require("fs");
       els.map((el) => ({
         id: el.dataset.itemId,
         name: el.querySelector("[data-name]")?.textContent.trim(),
+        flags: el.querySelector("[data-flags]")?.getAttribute("data-flags") || "",
         ...Object.fromEntries([...el.querySelectorAll("[data-fact]")].map((f) => [f.dataset.fact, f.textContent.trim()])),
       })),
     );
@@ -53,18 +60,19 @@ const fs = require("fs");
       ...(await facts.evaluate((el) => Object.fromEntries([...el.querySelectorAll("[data-fact]")].map((f) => [f.dataset.fact, f.textContent.trim()])))),
       name: (await region.locator("h2").innerText()).trim(),
       tags: await region.locator("[data-tag]").evaluateAll((els) => els.map((e) => `${e.getAttribute("aria-label")}:${e.dataset.state}`)),
+      flags: (await region.locator("[data-flag-record]").evaluateAll((els) => els.map((e) => e.dataset.flagRecord))).join("、"),
     };
   }
   const table = Object.entries(rows).map(([id, r]) => {
-    const diff = ["name", "rent", "area", "floor", "zone"].filter((k) => r.card[k] !== r.list?.[k] || r.card[k] !== r.detail[k]);
+    const diff = ["name", "rent", "area", "floor", "zone", "flags"].filter((k) => r.card[k] !== r.list?.[k] || r.card[k] !== r.detail[k]);
     const confirmed = r.detail.tags.filter((t) => t.endsWith(":yes")).map((t) => t.split(":")[0]).join("");
     if ((r.card.tags || "") !== (r.list?.tags || "") || (r.card.tags || "") !== confirmed) diff.push("tags");
-    return { id, filter: r.filter, name: r.card.name, rent: r.card.rent, area: r.card.area, floor: r.card.floor, zone: r.card.zone, tags: r.detail.tags.join(" "), diff };
+    return { id, filter: r.filter, name: r.card.name, rent: r.card.rent, area: r.card.area, floor: r.card.floor, zone: r.card.zone, flags: r.card.flags, tags: r.detail.tags.join(" "), diff };
   });
   if (out) fs.writeFileSync(out, JSON.stringify(table, null, 1));
   const mismatched = table.filter((t) => t.diff.length);
   const zeros = table.filter((t) => /^0(萬|坪)/.test(t.rent) || /^0(萬|坪)/.test(t.area));
-  console.log(JSON.stringify({ defaultFilter, items: table.length, mismatched: mismatched.length, zeros: zeros.length }));
+  console.log(JSON.stringify({ defaultFilter, items: table.length, mismatched: mismatched.length, zeros: zeros.length, blockedWrites }));
   for (const m of mismatched) console.log("MISMATCH", m.id, m.diff.join(","));
   await browser.close();
   process.exit(mismatched.length || zeros.length ? 1 : 0);

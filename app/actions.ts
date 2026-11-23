@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { fetchPreview, type Preview } from "@/lib/preview";
 import { removePhotos } from "@/lib/photos";
 import { mapLimit } from "@/lib/concurrency";
+import { existingLabelNotice, setFlag, type FlagChange } from "@/lib/flags";
 import { isDueForCheck } from "@/lib/health";
 import { findSameListing, itemFromPage } from "@/lib/merge";
 import { isGenericDescription, isGenericTitle } from "@/lib/meta";
@@ -176,6 +177,7 @@ export async function addManual(input: Partial<ItemFields>, nickname: unknown): 
         manual,
         tagOverrides: {},
         autoTags: {},
+        flags: [],
         photos: [],
         ...UNCHECKED,
         status: "new",
@@ -364,6 +366,34 @@ export async function setTag(id: unknown, key: unknown, value: unknown, nickname
       return true;
     });
     return { ok: true, doc };
+  });
+}
+
+/**
+ * Selects (on = true) or unselects a 股東評價 flag. The level of a name is
+ * decided inside the write, on the latest data, so two people creating the same
+ * custom name at different levels end up with whichever was saved first.
+ * Marking never changes the status and never adds a comment.
+ */
+export async function setItemFlag(id: unknown, label: unknown, on: unknown, level: unknown, nickname: unknown, fromForm?: unknown): Promise<ActionResult> {
+  return run(async () => {
+    if (typeof label !== "string" || typeof on !== "boolean" || (level !== "major" && level !== "minor")) {
+      return { ok: false, error: "評價標籤不正確" };
+    }
+    const who = nick(nickname);
+    let outcome = { ok: true, changed: false } as FlagChange;
+    const { doc } = await mutate((d) => {
+      const item = findItem(d, id);
+      const now = new Date().toISOString();
+      // Rebuilt on every attempt: mutate() re-runs this on fresh data after a write conflict.
+      outcome = setFlag(d.items, item, label, on, level, who, now);
+      if (!outcome.ok || !outcome.changed) return NO_WRITE;
+      item.updatedAt = now;
+      return true;
+    });
+    if (!outcome.ok) return { ok: false, error: outcome.error, doc };
+    const notice = fromForm === true && on && outcome.created === false && outcome.level ? existingLabelNotice(outcome.level) : undefined;
+    return { ok: true, doc, notice };
   });
 }
 

@@ -3,10 +3,11 @@
 import { useState, type FormEvent } from "react";
 import { zoneOf, type Zone } from "@/lib/compare";
 import { contactParts } from "@/lib/contact";
+import { FLAG_LEVEL_LABEL, MAX_LABEL_LENGTH, normalizeLabel, sortFlags, type CatalogEntry } from "@/lib/flags";
 import { tagsOf, type TagView } from "@/lib/tags";
-import { STATUS_LABEL, TAG_KEYS, type Doc, type Entry, type Item, type Status, type TagKey } from "@/lib/types";
+import { STATUS_LABEL, TAG_KEYS, type Doc, type Entry, type FlagLevel, type Item, type Status, type TagKey } from "@/lib/types";
 import { NOT_GIVEN } from "@/lib/units";
-import { factTexts } from "./facts";
+import { factTexts, FLAG_RING } from "./facts";
 import { hostOf, mapsUrl } from "@/lib/url";
 import { formatTime, openSource, StatusButtons } from "./bits";
 import { PhotoViewer } from "./photos";
@@ -21,6 +22,10 @@ export type DetailProps = {
   onStatus: (status: Status) => void;
   /** true = 是, false = 否, null = back to automatic reading. */
   onTag: (key: TagKey, value: boolean | null) => void;
+  /** 股東評價 labels to choose from (presets, then custom labels in use). */
+  flagCatalog: CatalogEntry[];
+  /** Selects or unselects a flag; resolves to whether it was saved. */
+  onFlag: (label: string, on: boolean, level: FlagLevel, fromForm?: boolean) => Promise<boolean>;
   onEdit: () => void;
   onDelete: () => void;
   onRestore: () => void;
@@ -183,6 +188,121 @@ function Facts({ item }: { item: Item }) {
   );
 }
 
+const FLAG_PRESSED: Record<FlagLevel, string> = { major: "bg-rose-600 text-white ring-rose-600", minor: "bg-orange-500 text-white ring-orange-500" };
+
+/**
+ * 股東評價: one tap selects, another unselects; every tap saves at once. Two
+ * rows (重大, 一般), then 「＋自訂」. Who marked each flag and when is listed below.
+ */
+function Flags({ item, catalog, onFlag }: { item: Item; catalog: CatalogEntry[]; onFlag: DetailProps["onFlag"] }) {
+  const [saving, setSaving] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [level, setLevel] = useState<FlagLevel>("minor");
+  const selected = new Set(item.flags.map((f) => f.label));
+  const label = normalizeLabel(name);
+  const nameError = name && !label ? "請輸入標籤名稱" : [...label].length > MAX_LABEL_LENGTH ? `最多 ${MAX_LABEL_LENGTH} 個字` : "";
+
+  async function save(target: string, on: boolean, lvl: FlagLevel, fromForm = false) {
+    setSaving(true);
+    const ok = await onFlag(target, on, lvl, fromForm);
+    setSaving(false);
+    return ok;
+  }
+
+  async function create(e: FormEvent) {
+    e.preventDefault();
+    if (!label || nameError) return;
+    if (await save(label, true, level, true)) {
+      setName("");
+      setLevel("minor");
+      setAdding(false);
+    }
+  }
+
+  const row = (lvl: FlagLevel) => (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label={`${FLAG_LEVEL_LABEL[lvl]}缺點`}>
+      {catalog
+        .filter((e) => e.level === lvl)
+        .map((e) => {
+          const on = selected.has(e.label);
+          return (
+            <button
+              key={e.label}
+              type="button"
+              aria-pressed={on}
+              disabled={saving}
+              data-flag-button={lvl}
+              onClick={() => save(e.label, !on, e.level)}
+              className={`rounded-full px-2.5 py-1 text-sm ring-1 disabled:opacity-60 ${on ? FLAG_PRESSED[lvl] : `bg-white ${FLAG_RING[lvl]}`}`}
+            >
+              {e.label}
+            </button>
+          );
+        })}
+      {lvl === "minor" && !adding && (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="rounded-full border border-dashed border-stone-400 bg-white px-2.5 py-1 text-sm text-stone-600 hover:bg-stone-50"
+        >
+          ＋自訂
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <section aria-label="股東評價" className="space-y-1.5">
+      <h3 className="text-xs font-medium text-stone-500">股東評價（點一下標記缺點，再點一下取消）</h3>
+      {row("major")}
+      {row("minor")}
+      {adding && (
+        <form onSubmit={create} className="flex flex-wrap items-center gap-2 rounded-lg bg-stone-50 p-2 text-sm ring-1 ring-stone-200" aria-label="新增自訂標籤">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-label="自訂標籤名稱"
+            placeholder="例如 門口太窄"
+            autoFocus
+            className="w-36 rounded-md border border-stone-300 bg-white px-2 py-1 text-[16px] sm:text-sm"
+          />
+          <span className="flex overflow-hidden rounded-md ring-1 ring-stone-300" role="radiogroup" aria-label="自訂標籤級別">
+            {(["major", "minor"] as const).map((l) => (
+              <button
+                key={l}
+                type="button"
+                role="radio"
+                aria-checked={level === l}
+                onClick={() => setLevel(l)}
+                className={`px-2 py-1 text-xs ${level === l ? FLAG_PRESSED[l] : "bg-white text-stone-600"}`}
+              >
+                {FLAG_LEVEL_LABEL[l]}
+              </button>
+            ))}
+          </span>
+          <button type="submit" disabled={saving || !label || Boolean(nameError)} className="rounded-md bg-stone-900 px-3 py-1 text-white disabled:opacity-40">
+            建立
+          </button>
+          <button type="button" onClick={() => setAdding(false)} className="rounded-md px-2 py-1 text-stone-600">
+            取消
+          </button>
+          {nameError && <span className="w-full text-xs text-rose-700">{nameError}</span>}
+        </form>
+      )}
+      {item.flags.length > 0 && (
+        <ul className="space-y-0.5 text-xs text-stone-500" aria-label="評價紀錄">
+          {sortFlags(item.flags).map((f) => (
+            <li key={f.label} data-flag-record={f.label}>
+              <span className={f.level === "major" ? "text-rose-700" : "text-orange-700"}>{f.label}</span>｜{f.by || "匿名"}｜{formatTime(f.at)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 const TAG_STATE: Record<TagView["state"], { text: string; style: string }> = {
   yes: { text: "是", style: "bg-emerald-50 text-emerald-800 ring-emerald-200" },
   no: { text: "否", style: "bg-rose-50 text-rose-800 ring-rose-200" },
@@ -268,6 +388,7 @@ function Summary(props: DetailProps & { item: Item; mobile?: boolean }) {
       <StoreTags item={item} onTag={props.onTag} />
       <LinkHealth item={item} />
       <StatusButtons status={item.status} onChange={props.onStatus} />
+      <Flags key={item.id} item={item} catalog={props.flagCatalog} onFlag={props.onFlag} />
       <div className="flex flex-wrap gap-2">
         {item.sourceUrl && <OpenSourceButton url={item.sourceUrl} big={mobile} />}
         {item.address && (

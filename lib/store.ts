@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { BlobError, BlobPreconditionFailedError, get, put } from "@vercel/blob";
+import { canonicalizeFlags } from "./flags";
 import { emptyDoc, normalizeItem, type Doc } from "./types";
 
 // The whole shared dataset is one JSON document. Writes are conditional on the
@@ -55,6 +56,11 @@ const blobBackend: Backend = {
 
 const LOCAL_FILE = path.join(process.cwd(), ".data", "db.json");
 
+// The local file stands in for Blob's conditional write: writes take turns
+// (one server process) and replace the file in one step, so two saves at the
+// same moment behave as on Blob: one wins, the other sees a conflict and retries.
+let localTurn: Promise<unknown> = Promise.resolve();
+
 const localBackend: Backend = {
   async read() {
     try {
@@ -65,11 +71,17 @@ const localBackend: Backend = {
     }
   },
   async write(doc, etag) {
-    const current = await this.read();
-    if (current.etag !== etag) return false;
-    await mkdir(path.dirname(LOCAL_FILE), { recursive: true });
-    await writeFile(LOCAL_FILE, JSON.stringify(doc));
-    return true;
+    const turn = localTurn.then(async () => {
+      const current = await this.read();
+      if (current.etag !== etag) return false;
+      await mkdir(path.dirname(LOCAL_FILE), { recursive: true });
+      const temp = `${LOCAL_FILE}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(temp, JSON.stringify(doc));
+      await rename(temp, LOCAL_FILE);
+      return true;
+    });
+    localTurn = turn.catch(() => undefined);
+    return turn;
   },
 };
 
@@ -86,7 +98,8 @@ function backend(): Backend {
 
 function parse(text: string): Doc {
   const data = JSON.parse(text) as Partial<Doc>;
-  return { version: 1, items: (data.items ?? []).map(normalizeItem), entries: data.entries ?? [] };
+  // Each rating flag name gets its one site-wide level whenever the data is read.
+  return { version: 1, items: canonicalizeFlags((data.items ?? []).map(normalizeItem)), entries: data.entries ?? [] };
 }
 
 function hash(text: string): string {

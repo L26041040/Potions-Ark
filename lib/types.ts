@@ -26,6 +26,12 @@ export type TagOverride = { value: boolean; by: string; at: string };
 /** What a page read found for one tag, with the words that decided it; null when the text says both yes and no. */
 export type AutoTag = { value: boolean | null; evidence: string };
 
+/** Shareholders' rating flags: 重大缺點 (red) or 一般缺點 (orange). */
+export type FlagLevel = "major" | "minor";
+
+/** One flaw a shareholder marked on an item; the level of a name is the same across the site. */
+export type Flag = { label: string; level: FlagLevel; by: string; at: string };
+
 export type Photo = {
   id: string;
   /** "listing": shown straight from the listing site. "upload": stored in our Blob store. */
@@ -54,6 +60,8 @@ export type Item = {
   tagOverrides: Partial<Record<TagKey, TagOverride>>;
   /** Store-condition tags found in the 591 listing text when the page was read. */
   autoTags: Partial<Record<TagKey, AutoTag>>;
+  /** 股東評價: flaws shareholders marked. Not part of the edit form; page reads and imports never touch it. */
+  flags: Flag[];
   photos: Photo[];
   embed: boolean;
   /**
@@ -122,7 +130,7 @@ export type AddOutcome = {
 };
 
 export type ActionResult =
-  | { ok: true; doc: Doc; id?: string; outcomes?: AddOutcome[] }
+  | { ok: true; doc: Doc; id?: string; outcomes?: AddOutcome[]; notice?: string }
   | { ok: false; error: string; doc?: Doc };
 
 /** Fills fields added after an item was saved, so older data keeps working. */
@@ -137,6 +145,9 @@ export function normalizeItem(raw: Item): Item {
     zone: typeof raw.zone === "string" ? raw.zone : "",
     tagOverrides: raw.tagOverrides && typeof raw.tagOverrides === "object" ? raw.tagOverrides : {},
     autoTags: raw.autoTags && typeof raw.autoTags === "object" ? raw.autoTags : {},
+    flags: Array.isArray(raw.flags)
+      ? raw.flags.filter((f): f is Flag => Boolean(f) && typeof f.label === "string" && (f.level === "major" || f.level === "minor"))
+      : [],
     photos: Array.isArray(raw.photos) ? raw.photos : [],
     manual: Array.isArray(raw.manual) ? raw.manual.filter((f) => (MANUAL_FIELDS as string[]).includes(f)) : [],
     health: raw.health ?? "unchecked",

@@ -87,6 +87,7 @@ export function itemFromPage(id: string, url: string, typedName: string, page: P
     zone: "",
     tagOverrides: {},
     autoTags: page.tags,
+    flags: [],
     photos: listingPhotos(page.photos, newId),
     embed: page.embed,
     manual: !title && typedName ? ["name"] : [],

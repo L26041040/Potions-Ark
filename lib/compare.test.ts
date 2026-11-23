@@ -36,7 +36,7 @@ describe("includesGroundFloor", () => {
 });
 
 describe("matchesQuick", () => {
-  const none: QuickFilter = { maxRent: null, minArea: null, groundFloor: false };
+  const none: QuickFilter = { maxRent: null, minArea: null, groundFloor: false, hideMajor: false, flag: null };
   const a = item({ rent: 156000, area: 50, floor: "1F/7F" });
   const b = item({ rent: 220000, area: 36.58, floor: "2F/16F" });
   const missing = item({ rent: null, area: null, floor: "" });
@@ -52,8 +52,18 @@ describe("matchesQuick", () => {
     expect(matchesQuick(b, { ...none, minArea: 40 })).toBe(false);
     expect(matchesQuick(a, { ...none, groundFloor: true })).toBe(true);
     expect(matchesQuick(b, { ...none, groundFloor: true })).toBe(false);
-    expect(matchesQuick(a, { maxRent: 160000, minArea: 50, groundFloor: true })).toBe(true);
-    expect(matchesQuick(a, { maxRent: 150000, minArea: 50, groundFloor: true })).toBe(false);
+    expect(matchesQuick(a, { ...none, maxRent: 160000, minArea: 50, groundFloor: true })).toBe(true);
+    expect(matchesQuick(a, { ...none, maxRent: 150000, minArea: 50, groundFloor: true })).toBe(false);
+  });
+
+  it("combines rating filters with the other conditions", () => {
+    const rated = item({ rent: 156000, area: 50, floor: "1F/7F", flags: [{ label: "太小", level: "major", by: "阿明", at: "2026-11-23T00:00:00Z" }] });
+    const minor = item({ rent: 120000, area: 40, floor: "1F/4F", flags: [{ label: "地下室", level: "minor", by: "阿明", at: "2026-11-23T00:00:00Z" }] });
+    expect(matchesQuick(rated, { ...none, hideMajor: true })).toBe(false);
+    expect(matchesQuick(a, { ...none, hideMajor: true })).toBe(true);
+    expect(matchesQuick(minor, { ...none, flag: "地下室", maxRent: 130000, groundFloor: true })).toBe(true);
+    expect(matchesQuick(minor, { ...none, flag: "地下室", maxRent: 100000 })).toBe(false);
+    expect(matchesQuick(a, { ...none, flag: "地下室" })).toBe(false);
   });
 
   it("never counts an item without the data as matching", () => {

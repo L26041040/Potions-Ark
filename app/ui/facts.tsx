@@ -1,6 +1,7 @@
 import { zoneOf } from "@/lib/compare";
+import { cardFlags, sortFlags } from "@/lib/flags";
 import { confirmedTags } from "@/lib/tags";
-import type { Item } from "@/lib/types";
+import type { FlagLevel, Item } from "@/lib/types";
 import { formatArea, formatRent, NOT_GIVEN } from "@/lib/units";
 
 // The key facts, worked out once and shown the same way on cards, list rows and the detail panel.
@@ -46,6 +47,37 @@ export function PlaceFacts({ item }: { item: Item }) {
       <span>
         商圈 <Value fact="zone" text={f.zone} className="" />
       </span>
+    </span>
+  );
+}
+
+export const FLAG_RING: Record<FlagLevel, string> = { major: "text-rose-700 ring-rose-500", minor: "text-orange-700 ring-orange-400" };
+
+/** 股東評價 on cards and list rows: 重大 first, two at most, the rest as +N, on one line. */
+export function FlagChips({ item }: { item: Item }) {
+  const { shown, more } = cardFlags(item.flags);
+  if (!shown.length) return null;
+  return (
+    <span
+      className="flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden px-px py-px"
+      data-flags={sortFlags(item.flags).map((f) => f.label).join("、")}
+    >
+      <span className="sr-only">股東評價：</span>
+      {shown.map((f) => (
+        <span
+          key={f.label}
+          title={f.label}
+          data-flag={f.level}
+          className={`min-w-0 max-w-[7rem] truncate rounded-full bg-white px-1.5 py-px text-[11px] font-medium ring-1 ${FLAG_RING[f.level]}`}
+        >
+          {f.label}
+        </span>
+      ))}
+      {more > 0 && (
+        <span data-flag="more" className="shrink-0 rounded-full bg-stone-100 px-1.5 py-px text-[11px] text-stone-600">
+          +{more}
+        </span>
+      )}
     </span>
   );
 }

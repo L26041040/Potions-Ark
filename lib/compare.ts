@@ -2,6 +2,7 @@
 // ground floor, the quick filters and the shared sort order. Pure; the data is
 // never changed, only how it is shown.
 
+import { matchesFlagFilter, type FlagFilter } from "./flags";
 import type { Item } from "./types";
 
 export type Zone = { value: string; source: "" | "股東填寫" | "試算表商圈" | "地址" };
@@ -46,7 +47,7 @@ export function includesGroundFloor(floor: string): boolean | null {
   return ground;
 }
 
-export type QuickFilter = {
+export type QuickFilter = FlagFilter & {
   /** Highest rent in 元, or null. */
   maxRent: number | null;
   minArea: number | null;
@@ -58,7 +59,7 @@ export function matchesQuick(item: Item, q: QuickFilter): boolean {
   if (q.maxRent !== null && (item.rent === null || item.rent > q.maxRent)) return false;
   if (q.minArea !== null && (item.area === null || item.area < q.minArea)) return false;
   if (q.groundFloor && includesGroundFloor(item.floor) !== true) return false;
-  return true;
+  return matchesFlagFilter(item, q);
 }
 
 export type SortKey = "newest" | "oldest" | "rentAsc" | "rentDesc" | "areaAsc" | "areaDesc";

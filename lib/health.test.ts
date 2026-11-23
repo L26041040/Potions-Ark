@@ -53,6 +53,7 @@ function item(over: Partial<Item>): Item {
     zone: "",
     tagOverrides: {},
     autoTags: {},
+    flags: [],
     manual: [],
     photos: [],
     embed: true,
