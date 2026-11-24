@@ -36,6 +36,9 @@ function matchesFilter(item: Item, filter: Filter): boolean {
 }
 
 
+/** How long the warehouse must be visible before the background link check starts. */
+const RECHECK_AFTER_VISIBLE_MS = 10_000;
+
 /** Identifies this page load in history entries, so 「關閉」 never goes back past a reload. */
 const PAGE_LOAD = Math.random().toString(36).slice(2);
 
@@ -80,25 +83,39 @@ export default function App({ initialDoc, initialItemId }: { initialDoc: Doc; in
 
   // Opening the warehouse re-checks, in the background, links not checked in
   // the last 24 hours (not 不考慮, not in the recycle bin). There is no schedule.
+  // Only a person's visit starts it: automated browsers (Vercel opens every new
+  // deployment to take a screenshot) never do, and the page must have been
+  // visible for a while, so a deployment never writes to the shared data.
   useEffect(() => {
-    if (checkStarted.current) return;
-    checkStarted.current = true;
-    const due = initialDoc.items.filter((i) => isDueForCheck(i, Date.now())).map((i) => i.id);
-    (async () => {
-      for (let i = 0; i < due.length; i += 8) {
-        try {
-          const response = await fetch("/api/recheck", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ ids: due.slice(i, i + 8) }),
-          });
-          const res = (await response.json()) as ActionResult;
-          if (res.ok) setDoc(res.doc);
-        } catch {
-          return;
+    if (checkStarted.current || navigator.webdriver) return;
+    let visibleMs = 0;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") visibleMs += 1000;
+      if (visibleMs < RECHECK_AFTER_VISIBLE_MS || checkStarted.current) return;
+      window.clearInterval(timer);
+      startRecheck();
+    }, 1000);
+    return () => window.clearInterval(timer);
+
+    function startRecheck() {
+      checkStarted.current = true;
+      const due = initialDoc.items.filter((i) => isDueForCheck(i, Date.now())).map((i) => i.id);
+      (async () => {
+        for (let i = 0; i < due.length; i += 8) {
+          try {
+            const response = await fetch("/api/recheck", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ids: due.slice(i, i + 8) }),
+            });
+            const res = (await response.json()) as ActionResult;
+            if (res.ok) setDoc(res.doc);
+          } catch {
+            return;
+          }
         }
-      }
-    })();
+      })();
+    }
   }, [initialDoc]);
 
   const q = query.trim().toLowerCase();

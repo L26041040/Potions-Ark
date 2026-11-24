@@ -125,6 +125,10 @@ async function showFilter(page, label) {
 
   const browser = await chromium.launch();
   const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  if (process.env.LOCAL_DATA) {
+    // The app skips the background link check in automated browsers; step 21 tests it as a person's visit would.
+    await desktop.addInitScript(() => Object.defineProperty(navigator, "webdriver", { get: () => false }));
+  }
   await stubExternal(desktop);
   desktop.setDefaultTimeout(20000);
   const page = await desktop.newPage();
@@ -970,7 +974,8 @@ async function showFilter(page, label) {
       await page.goto(BASE);
       const byId = () => Object.fromEntries(JSON.parse(fs.readFileSync(file, "utf8")).items.map((i) => [i.id, i]));
       let after = byId();
-      for (let t = 0; t < 40 && after[due.id].healthAt === old; t++) {
+      // The check starts after the page has been visible for 10 seconds.
+      for (let t = 0; t < 120 && after[due.id].healthAt === old; t++) {
         await new Promise((r) => setTimeout(r, 250));
         after = byId();
       }
