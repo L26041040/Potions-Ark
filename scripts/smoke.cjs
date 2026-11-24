@@ -50,6 +50,12 @@ async function stubExternal(context) {
   }
   await context.route("**/*", (route) => {
     const url = new URL(route.request().url());
+    // On the shared preview, hundreds of old test items are due for a link check; every page the
+    // walkthrough opens would start a background sweep that keeps rewriting the shared data and
+    // slows every step. The sweep itself is tested locally (step 21).
+    if (process.env.SHARE_URL && url.pathname === "/api/recheck") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: false, error: "skipped in walkthrough" }) });
+    }
     if (url.host === base.host) return route.continue();
     if (route.request().resourceType() === "image") {
       // Real 591 listing photos are loaded so the photo preview is checked with real images.
@@ -881,6 +887,7 @@ async function showFilter(page, label) {
     await Promise.all([pressedIn(x.p, name), pressedIn(y.p, name)]);
     const notices = (await Promise.all([x, y].map((who) => who.p.getByText(/已有此標籤（(重大|一般)），已直接套用/).count()))).reduce((a, b) => a + b, 0);
     await page.goto(`${BASE}/?item=${A}`);
+    await page.getByRole("region", { name: "物件瀏覽" }).getByRole("region", { name: "股東評價" }).locator("[data-flag-button]").first().waitFor();
     const levels = await page.getByRole("region", { name: "物件瀏覽" }).locator("[data-flag-button]").evaluateAll((els, l) => els.filter((b) => b.textContent === l).map((b) => b.dataset.flagButton), name);
     assert.strictEqual(levels.length, 1, `同名標籤出現 ${levels.length} 個按鈕`);
     let raw = "畫面";
